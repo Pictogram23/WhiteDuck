@@ -1,0 +1,43 @@
+# --- JUCE Specific ---
+# Projucerが各環境用に生成するプロジェクトファイル群
+# これらは .jucer ファイルからいつでも再生成できるため管理不要です
+/Builds/
+/JuceLibraryCode/
+
+# --- Visual Studio ---
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.filters
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.cache
+*.db
+
+# --- Build Outputs ---
+# コンパイル時に生成される実行ファイルや中間ファイル
+bin/
+obj/
+x64/
+x86/
+Debug/
+Release/
+*.exe
+*.dll
+*.vst3
+*.lib
+*.pdb
+*.exp
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+
+# --- Others ---
+# 一時的なバックアップやログファイル
+*.bak
+*.log
