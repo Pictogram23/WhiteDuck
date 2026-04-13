@@ -91,10 +91,16 @@ void WhiteDuckAudioProcessor::changeProgramName (int index, const juce::String& 
 }
 
 //==============================================================================
-void WhiteDuckAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void WhiteDuckAudioProcessor::prepareToPlay (double newSampleRate, int samplesPerBlock)
 {
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
+    sampleRate = newSampleRate;
+    
+    // Initialize envelope times
+    duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
+    duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
+    
+    // Prepare buffer
+    duckedBuffer.setSize(2, samplesPerBlock);
 }
 
 void WhiteDuckAudioProcessor::releaseResources()
@@ -135,26 +141,41 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-    // In case we have more outputs than inputs, this code clears any output
-    // channels that didn't contain input data, (because these aren't
-    // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
+    // Clear output channels that don't have input
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
+    // Process MIDI messages to trigger ducking envelope
+    for (auto metadata : midiMessages)
     {
-        auto* channelData = buffer.getWritePointer (channel);
+        auto msg = metadata.getMessage();
+        if (msg.isNoteOn())
+        {
+            if (msg.getNoteNumber() == midiNoteToTrigger)
+            {
+                duckingEnvelope.trigger();
+            }
+        }
+    }
+    
+    // Clear MIDI messages - no need to pass them through
+    midiMessages.clear();
 
-        // ..do something to the data...
+    // Apply ducking to audio
+    int numSamples = buffer.getNumSamples();
+    for (int sample = 0; sample < numSamples; ++sample)
+    {
+        float envelopeLevel = duckingEnvelope.process();
+        
+        // envelopeLevel: 0.01f (\u6700\u5c0f\u98b6) ~ 1.0f (\u6b63\u5e38)
+        // gainReduction: 0 (\u5b8c\u5168\u30df\u30e5\u30fc\u30c8) ~ 1.0f (\u6b63\u5e38\u97f3)
+        float gainReduction = envelopeLevel * mixAmount + (1.0f - mixAmount);
+        
+        for (int channel = 0; channel < totalNumInputChannels; ++channel)
+        {
+            auto* channelData = buffer.getWritePointer(channel);
+            channelData[sample] *= gainReduction;
+        }
     }
 }
 
@@ -172,15 +193,30 @@ juce::AudioProcessorEditor* WhiteDuckAudioProcessor::createEditor()
 //==============================================================================
 void WhiteDuckAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // You should use this method to store your parameters in the memory block.
-    // You could do that either as raw data, or use the XML or ValueTree classes
-    // as intermediaries to make it easy to save and load complex data.
+    juce::MemoryOutputStream mos(destData, true);
+    
+    // Binary format で保存（シンプルで確実）
+    mos.writeFloat(mixAmount);
+    mos.writeFloat(attackTimeMs);
+    mos.writeFloat(releaseTimeMs);
+    mos.writeInt(midiNoteToTrigger);
 }
 
 void WhiteDuckAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    // You should use this method to restore your parameters from this memory block,
-    // whose contents will have been created by the getStateInformation() call.
+    juce::MemoryInputStream mis(data, sizeInBytes, false);
+    
+    if (sizeInBytes >= (sizeof(float) * 3 + sizeof(int)))
+    {
+        mixAmount = mis.readFloat();
+        attackTimeMs = mis.readFloat();
+        releaseTimeMs = mis.readFloat();
+        midiNoteToTrigger = mis.readInt();
+        
+        // Envelope を再初期化
+        duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
+        duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
+    }
 }
 
 //==============================================================================
