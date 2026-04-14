@@ -99,6 +99,14 @@ void WhiteDuckAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
     duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
     
+    // Initialize bands and reset filter states
+    initializeBands();
+    updateBandCoefficients();
+    for (int b = 0; b < NUM_BANDS; ++b)
+    {
+        duckingBands[b].reset();
+    }
+    
     // Prepare buffer
     duckedBuffer.setSize(2, samplesPerBlock);
 }
@@ -153,6 +161,7 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         {
             if (msg.getNoteNumber() == midiNoteToTrigger)
             {
+                // Trigger new attack - do NOT reset filter to maintain ducking continuity
                 duckingEnvelope.trigger();
             }
         }
@@ -161,20 +170,91 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     // Clear MIDI messages - no need to pass them through
     midiMessages.clear();
 
-    // Apply ducking to audio
+    // Apply ducking to audio with band processing
     int numSamples = buffer.getNumSamples();
-    for (int sample = 0; sample < numSamples; ++sample)
+    
+    // Check if any band is enabled
+    bool anyBandEnabled = false;
+    for (int b = 0; b < NUM_BANDS; ++b)
     {
-        float envelopeLevel = duckingEnvelope.process();
-        
-        // envelopeLevel: 0.01f (\u6700\u5c0f\u98b6) ~ 1.0f (\u6b63\u5e38)
-        // gainReduction: 0 (\u5b8c\u5168\u30df\u30e5\u30fc\u30c8) ~ 1.0f (\u6b63\u5e38\u97f3)
-        float gainReduction = envelopeLevel * mixAmount + (1.0f - mixAmount);
-        
-        for (int channel = 0; channel < totalNumInputChannels; ++channel)
+        if (duckingBands[b].enabled)
         {
-            auto* channelData = buffer.getWritePointer(channel);
-            channelData[sample] *= gainReduction;
+            anyBandEnabled = true;
+            break;
+        }
+    }
+    
+    // Track phase transitions for filter cleanup
+    static DuckingEnvelope::Phase lastPhase = DuckingEnvelope::Phase::Idle;
+    DuckingEnvelope::Phase currentPhase = duckingEnvelope.getPhase();
+    
+    // Reset filter when returning to Idle (end of release cycle)
+    if (currentPhase == DuckingEnvelope::Phase::Idle && 
+        lastPhase != DuckingEnvelope::Phase::Idle)
+    {
+        for (int b = 0; b < NUM_BANDS; ++b)
+        {
+            duckingBands[b].reset();
+        }
+    }
+    lastPhase = currentPhase;
+    
+    for (int channel = 0; channel < totalNumInputChannels; ++channel)
+    {
+        auto* channelData = buffer.getWritePointer(channel);
+        
+        for (int sample = 0; sample < numSamples; ++sample)
+        {
+            float envelopeLevel = duckingEnvelope.process();
+            
+            // Clamp envelope
+            envelopeLevel = juce::jlimit(0.01f, 1.0f, envelopeLevel);
+            
+            // gainReduction: 1.0 = full signal, 0.01 = heavily reduced
+            float gainReduction = envelopeLevel * mixAmount + (1.0f - mixAmount);
+            gainReduction = juce::jlimit(0.01f, 1.0f, gainReduction);
+            
+            // Original signal, clamped and denormal-flushed
+            float output = channelData[sample];
+            if (std::abs(output) < 1e-8f) output = 0.0f;
+            output = juce::jlimit(-1.0f, 1.0f, output);
+            
+            // Only process filter during ATTACK phase to avoid filter drift
+            // During Release, use gainReduction directly without filter processing
+            bool isAttackPhase = (currentPhase == DuckingEnvelope::Phase::Attack);
+            
+            if (anyBandEnabled && gainReduction < 0.99f && isAttackPhase)
+            {
+                // Process through single bandpass filter (Attack only)
+                float bandComponent = duckingBands[0].bandPassFilter.process(output);
+                
+                // Clamp band component with denormal flush
+                if (std::abs(bandComponent) < 1e-8f) bandComponent = 0.0f;
+                bandComponent = juce::jlimit(-1.0f, 1.0f, bandComponent);
+                
+                // Calculate how much to reduce this band
+                float duckAmount = 1.0f - gainReduction;
+                duckAmount = juce::jlimit(0.0f, 1.0f, duckAmount);
+                
+                // Remove the band component and apply ducking
+                output = output - (bandComponent * duckAmount);
+                
+                // Safety clip with headroom
+                output = juce::jlimit(-0.99f, 0.99f, output);
+            }
+            else if (anyBandEnabled && gainReduction < 1.0f && !isAttackPhase)
+            {
+                // Release phase: apply pure gain reduction without filter processing
+                // This prevents filter state drift noise during long releases
+                output = output * gainReduction;
+                output = juce::jlimit(-0.99f, 0.99f, output);
+            }
+            
+            // Denormal flush on output
+            if (std::abs(output) < 1e-8f) output = 0.0f;
+            
+            // Update the output
+            channelData[sample] = output;
         }
     }
 }
@@ -195,11 +275,18 @@ void WhiteDuckAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     juce::MemoryOutputStream mos(destData, true);
     
-    // Binary format で保存（シンプルで確実）
     mos.writeFloat(mixAmount);
     mos.writeFloat(attackTimeMs);
     mos.writeFloat(releaseTimeMs);
     mos.writeInt(midiNoteToTrigger);
+    
+    // Save band parameters (LEFT/RIGHT frequencies)
+    for (int b = 0; b < NUM_BANDS; ++b)
+    {
+        mos.writeFloat(duckingBands[b].leftFreq);
+        mos.writeFloat(duckingBands[b].rightFreq);
+        mos.writeBool(duckingBands[b].enabled);
+    }
 }
 
 void WhiteDuckAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -213,9 +300,21 @@ void WhiteDuckAudioProcessor::setStateInformation (const void* data, int sizeInB
         releaseTimeMs = mis.readFloat();
         midiNoteToTrigger = mis.readInt();
         
-        // Envelope を再初期化
         duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
         duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
+        
+        // Load band parameters if available (LEFT/RIGHT frequencies)
+        for (int b = 0; b < NUM_BANDS; ++b)
+        {
+            if (mis.getPosition() < mis.getTotalLength())
+            {
+                duckingBands[b].leftFreq = mis.readFloat();
+                duckingBands[b].rightFreq = mis.readFloat();
+                duckingBands[b].enabled = mis.readBool();
+            }
+        }
+        
+        updateBandCoefficients();
     }
 }
 
