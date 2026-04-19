@@ -14,17 +14,14 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
     // Mode toggle button
-    bpmSyncModeButton.setToggleState(audioProcessor.getBpmSyncMode(), juce::dontSendNotification);
-    bpmSyncModeButton.addListener(this);
     addAndMakeVisible(bpmSyncModeButton);
+    bpmSyncModeButton.addListener(this);
     bpmModeLabel.setText("Sync Mode:", juce::dontSendNotification);
     addAndMakeVisible(bpmModeLabel);
     
     // Global Sliders
     attackSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     attackSlider.setRange(0.1, 200.0, 0.1);
-    attackSlider.setValue(audioProcessor.getAttackTime(), juce::dontSendNotification);
-    attackSlider.addListener(this);
     addAndMakeVisible(attackSlider);
     attackLabel.setText("Attack", juce::dontSendNotification);
     attackLabel.attachToComponent(&attackSlider, true);
@@ -32,8 +29,6 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     
     releaseSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     releaseSlider.setRange(10.0, 2000.0, 10.0);
-    releaseSlider.setValue(audioProcessor.getReleaseTime(), juce::dontSendNotification);
-    releaseSlider.addListener(this);
     addAndMakeVisible(releaseSlider);
     releaseLabel.setText("Release", juce::dontSendNotification);
     releaseLabel.attachToComponent(&releaseSlider, true);
@@ -41,8 +36,6 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     
     mixSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     mixSlider.setRange(0.0, 1.0, 0.01);
-    mixSlider.setValue(audioProcessor.getMixAmount(), juce::dontSendNotification);
-    mixSlider.addListener(this);
     addAndMakeVisible(mixSlider);
     mixLabel.setText("Mix", juce::dontSendNotification);
     mixLabel.attachToComponent(&mixSlider, true);
@@ -50,26 +43,20 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     
     midiNoteSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     midiNoteSlider.setRange(0.0, 127.0, 1.0);
-    midiNoteSlider.setValue(static_cast<float>(audioProcessor.getMidiNoteToTrigger()), juce::dontSendNotification);
-    midiNoteSlider.addListener(this);
     addAndMakeVisible(midiNoteSlider);
     midiNoteLabel.setText("MIDI", juce::dontSendNotification);
     midiNoteLabel.attachToComponent(&midiNoteSlider, true);
     addAndMakeVisible(midiNoteLabel);
     
     // Band enable toggles (separate for LEFT and RIGHT)
-    enableLeftButton.addListener(this);
     addAndMakeVisible(enableLeftButton);
     
-    enableRightButton.addListener(this);
     addAndMakeVisible(enableRightButton);
     
     // LEFT frequency slider
     leftFreqSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     leftFreqSlider.setRange(20.0, 19999.0, 1.0);
     leftFreqSlider.setSkewFactorFromMidPoint(500.0);
-    leftFreqSlider.setValue(audioProcessor.getBandFrequency(0, true), juce::dontSendNotification);
-    leftFreqSlider.addListener(this);
     addAndMakeVisible(leftFreqSlider);
     leftFreqLabel.setText("LEFT", juce::dontSendNotification);
     leftFreqLabel.attachToComponent(&leftFreqSlider, true);
@@ -79,8 +66,6 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     rightFreqSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     rightFreqSlider.setRange(21.0, 20000.0, 1.0);
     rightFreqSlider.setSkewFactorFromMidPoint(5000.0);
-    rightFreqSlider.setValue(audioProcessor.getBandFrequency(0, false), juce::dontSendNotification);
-    rightFreqSlider.addListener(this);
     addAndMakeVisible(rightFreqSlider);
     rightFreqLabel.setText("RIGHT", juce::dontSendNotification);
     rightFreqLabel.attachToComponent(&rightFreqSlider, true);
@@ -101,7 +86,6 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     releaseNoteComboBox.addItem("Half", 11);
     releaseNoteComboBox.addItem("Dotted Half", 12);
     releaseNoteComboBox.addItem("Whole", 13);
-    releaseNoteComboBox.setSelectedId(audioProcessor.getReleaseNoteValue() + 1, juce::dontSendNotification);
     releaseNoteComboBox.addListener(this);
     addAndMakeVisible(releaseNoteComboBox);
     releaseNoteLabel.setText("Release Note", juce::dontSendNotification);
@@ -112,8 +96,6 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     attackCurveComboBox.addItem("Balanced", 1);
     attackCurveComboBox.addItem("Slow", 2);
     attackCurveComboBox.addItem("Fast", 3);
-    attackCurveComboBox.setSelectedId(audioProcessor.getAttackCurveType() + 1, juce::dontSendNotification);
-    attackCurveComboBox.addListener(this);
     addAndMakeVisible(attackCurveComboBox);
     attackCurveLabel.setText("Attack Curve", juce::dontSendNotification);
     attackCurveLabel.attachToComponent(&attackCurveComboBox, true);
@@ -122,19 +104,29 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     releaseCurveComboBox.addItem("Balanced", 1);
     releaseCurveComboBox.addItem("Slow", 2);
     releaseCurveComboBox.addItem("Fast", 3);
-    releaseCurveComboBox.setSelectedId(audioProcessor.getReleaseCurveType() + 1, juce::dontSendNotification);
-    releaseCurveComboBox.addListener(this);
     addAndMakeVisible(releaseCurveComboBox);
     releaseCurveLabel.setText("Release Curve", juce::dontSendNotification);
     releaseCurveLabel.attachToComponent(&releaseCurveComboBox, true);
     addAndMakeVisible(releaseCurveLabel);
     
-    // Update UI with current band state
-    enableLeftButton.setToggleState(audioProcessor.isBandLeftEnabled(0), juce::dontSendNotification);
-    enableRightButton.setToggleState(audioProcessor.isBandRightEnabled(0), juce::dontSendNotification);
+    // Attachments for automated parameters
+    auto& state = audioProcessor.getValueTreeState();
+    bpmSyncAttachment = std::make_unique<ButtonAttachment>(state, WhiteDuckAudioProcessor::PARAM_BPM_SYNC, bpmSyncModeButton);
+    attackAttachment = std::make_unique<SliderAttachment>(state, WhiteDuckAudioProcessor::PARAM_ATTACK_MS, attackSlider);
+    releaseAttachment = std::make_unique<SliderAttachment>(state, WhiteDuckAudioProcessor::PARAM_RELEASE_MS, releaseSlider);
+    mixAttachment = std::make_unique<SliderAttachment>(state, WhiteDuckAudioProcessor::PARAM_MIX, mixSlider);
+    midiNoteAttachment = std::make_unique<SliderAttachment>(state, WhiteDuckAudioProcessor::PARAM_MIDI_NOTE, midiNoteSlider);
+    leftFreqAttachment = std::make_unique<SliderAttachment>(state, WhiteDuckAudioProcessor::PARAM_BAND_LEFT_FREQ, leftFreqSlider);
+    rightFreqAttachment = std::make_unique<SliderAttachment>(state, WhiteDuckAudioProcessor::PARAM_BAND_RIGHT_FREQ, rightFreqSlider);
+    enableLeftAttachment = std::make_unique<ButtonAttachment>(state, WhiteDuckAudioProcessor::PARAM_BAND_LEFT_ENABLED, enableLeftButton);
+    enableRightAttachment = std::make_unique<ButtonAttachment>(state, WhiteDuckAudioProcessor::PARAM_BAND_RIGHT_ENABLED, enableRightButton);
+    attackCurveAttachment = std::make_unique<ComboBoxAttachment>(state, WhiteDuckAudioProcessor::PARAM_ATTACK_CURVE, attackCurveComboBox);
+    releaseCurveAttachment = std::make_unique<ComboBoxAttachment>(state, WhiteDuckAudioProcessor::PARAM_RELEASE_CURVE, releaseCurveComboBox);
+    releaseNoteAttachment = std::make_unique<ComboBoxAttachment>(state, WhiteDuckAudioProcessor::PARAM_RELEASE_NOTE, releaseNoteComboBox);
     
     // Initialize UI based on mode
     updateModeUI();
+    startTimerHz(10);
     
     setSize(640, 380);  // Wider layout to avoid text clipping
 }
@@ -155,14 +147,14 @@ void WhiteDuckAudioProcessorEditor::paint (juce::Graphics& g)
 
 void WhiteDuckAudioProcessorEditor::resized()
 {
-    int labelWidth = 110;
+    int labelWidth = 125;
     int sliderHeight = 25;
     int borderY = 35;  // Increased to make room for title
     int spacing = 28;
     
     // Mode toggle button (below title area)
     bpmModeLabel.setBounds(10, borderY - 25, 95, 20);
-    bpmSyncModeButton.setBounds(108, borderY - 25, 110, 20);
+    bpmSyncModeButton.setBounds(108, borderY - 25, 150, 20);
     
     // Global parameters section
     int yOffset = borderY;
@@ -179,8 +171,8 @@ void WhiteDuckAudioProcessorEditor::resized()
     
     // Band controls - compact layout
     int bandSettingsY = yOffset + spacing + 10;
-    enableLeftButton.setBounds(20, bandSettingsY, 130, 20);
-    enableRightButton.setBounds(160, bandSettingsY, 130, 20);
+    enableLeftButton.setBounds(20, bandSettingsY, 150, 20);
+    enableRightButton.setBounds(180, bandSettingsY, 150, 20);
     
     int leftFreqY = bandSettingsY + 30;
     leftFreqSlider.setBounds(labelWidth + 10, leftFreqY, getWidth() - labelWidth - 20, sliderHeight);
@@ -194,75 +186,29 @@ void WhiteDuckAudioProcessorEditor::resized()
     
     // Curve type selection
     int curvesSectionY = releaseNoteY + spacing + 10;
-    attackCurveComboBox.setBounds(labelWidth + 10, curvesSectionY, getWidth() - labelWidth - 20, 20);
+    attackCurveComboBox.setBounds(labelWidth + 10, curvesSectionY, getWidth() - labelWidth - 20, 22);
     
     int releaseCurveY = curvesSectionY + spacing;
-    releaseCurveComboBox.setBounds(labelWidth + 10, releaseCurveY, getWidth() - labelWidth - 20, 20);
+    releaseCurveComboBox.setBounds(labelWidth + 10, releaseCurveY, getWidth() - labelWidth - 20, 22);
 }
 
 void WhiteDuckAudioProcessorEditor::sliderValueChanged(juce::Slider* slider)
 {
-    if (slider == &mixSlider)
-    {
-        audioProcessor.setMixAmount(static_cast<float>(mixSlider.getValue()));
-    }
-    else if (slider == &attackSlider)
-    {
-        audioProcessor.setAttackTime(static_cast<float>(attackSlider.getValue()));
-    }
-    else if (slider == &releaseSlider)
-    {
-        audioProcessor.setReleaseTime(static_cast<float>(releaseSlider.getValue()));
-    }
-    else if (slider == &midiNoteSlider)
-    {
-        audioProcessor.setMidiNoteToTrigger(static_cast<int>(midiNoteSlider.getValue()));
-    }
-    else if (slider == &leftFreqSlider)
-    {
-        audioProcessor.setBandFrequency(0, static_cast<float>(leftFreqSlider.getValue()), true);
-    }
-    else if (slider == &rightFreqSlider)
-    {
-        audioProcessor.setBandFrequency(0, static_cast<float>(rightFreqSlider.getValue()), false);
-    }
 }
 
 void WhiteDuckAudioProcessorEditor::buttonClicked(juce::Button* button)
 {
     if (button == &bpmSyncModeButton)
     {
-        bool newMode = bpmSyncModeButton.getToggleState();
-        audioProcessor.setBpmSyncMode(newMode);
-
-        // Reflect updated release value immediately after mode switch.
-        releaseSlider.setValue(audioProcessor.getReleaseTime(), juce::dontSendNotification);
+        audioProcessor.setBpmSyncMode(bpmSyncModeButton.getToggleState());
         updateModeUI();
-    }
-    else if (button == &enableLeftButton)
-    {
-        audioProcessor.setBandLeftEnabled(0, enableLeftButton.getToggleState());
-    }
-    else if (button == &enableRightButton)
-    {
-        audioProcessor.setBandRightEnabled(0, enableRightButton.getToggleState());
     }
 }
 
 void WhiteDuckAudioProcessorEditor::comboBoxChanged(juce::ComboBox* comboBox)
 {
-    if (comboBox == &attackCurveComboBox)
-    {
-        audioProcessor.setAttackCurveType(comboBox->getSelectedId() - 1);
-    }
-    else if (comboBox == &releaseCurveComboBox)
-    {
-        audioProcessor.setReleaseCurveType(comboBox->getSelectedId() - 1);
-    }
-    else if (comboBox == &releaseNoteComboBox)
-    {
+    if (comboBox == &releaseNoteComboBox)
         audioProcessor.setReleaseNoteValue(comboBox->getSelectedId() - 1);
-    }
 }
 
 void WhiteDuckAudioProcessorEditor::updateBandUI(int bandIndex)
@@ -272,7 +218,7 @@ void WhiteDuckAudioProcessorEditor::updateBandUI(int bandIndex)
 
 void WhiteDuckAudioProcessorEditor::updateModeUI()
 {
-    bool isBpmSync = audioProcessor.getBpmSyncMode();
+    bool isBpmSync = bpmSyncModeButton.getToggleState();
     
     // Sync mode only affects Release selection
     releaseSlider.setEnabled(!isBpmSync);
@@ -282,4 +228,12 @@ void WhiteDuckAudioProcessorEditor::updateModeUI()
     // Attack is always in milliseconds
     attackLabel.setText("Attack (ms)", juce::dontSendNotification);
     releaseLabel.setText(isBpmSync ? "Release (Note)" : "Release (ms)", juce::dontSendNotification);
+
+    if (isBpmSync)
+        releaseSlider.setValue(audioProcessor.getDisplayedReleaseTimeMs(), juce::dontSendNotification);
+}
+
+void WhiteDuckAudioProcessorEditor::timerCallback()
+{
+    updateModeUI();
 }

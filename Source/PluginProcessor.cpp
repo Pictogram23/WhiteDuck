@@ -9,21 +9,66 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+namespace
+{
+    template <typename ParameterType>
+    void setParameterValue(juce::AudioProcessorValueTreeState& state, const char* paramID, float value)
+    {
+        if (auto* param = dynamic_cast<ParameterType*>(state.getParameter(paramID)))
+            param->setValueNotifyingHost(param->convertTo0to1(value));
+    }
+}
+
+//==============================================================================
+juce::AudioProcessorValueTreeState::ParameterLayout WhiteDuckAudioProcessor::createParameterLayout()
+{
+    juce::AudioProcessorValueTreeState::ParameterLayout layout;
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(PARAM_MIX, "Mix", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), DEFAULT_MIX));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(PARAM_ATTACK_MS, "Attack (ms)", juce::NormalisableRange<float>(0.1f, 200.0f, 0.1f), DEFAULT_ATTACK));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(PARAM_RELEASE_MS, "Release (ms)", juce::NormalisableRange<float>(10.0f, 2000.0f, 10.0f), DEFAULT_RELEASE));
+    layout.add(std::make_unique<juce::AudioParameterInt>(PARAM_MIDI_NOTE, "MIDI Note", 0, 127, DEFAULT_MIDI_NOTE));
+    layout.add(std::make_unique<juce::AudioParameterBool>(PARAM_BPM_SYNC, "BPM Sync", false));
+
+    juce::StringArray curveChoices { "Balanced", "Slow", "Fast" };
+    layout.add(std::make_unique<juce::AudioParameterChoice>(PARAM_ATTACK_CURVE, "Attack Curve", curveChoices, 0));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(PARAM_RELEASE_CURVE, "Release Curve", curveChoices, 0));
+
+    juce::StringArray releaseNoteChoices
+    {
+        "64th", "Dotted 64th", "32nd", "Dotted 32nd", "16th", "Dotted 16th",
+        "8th", "Dotted 8th", "Quarter", "Dotted Qtr", "Half", "Dotted Half", "Whole"
+    };
+    layout.add(std::make_unique<juce::AudioParameterChoice>(PARAM_RELEASE_NOTE, "Release Note", releaseNoteChoices, 8));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>(PARAM_BAND_ENABLED, "Band Enabled", true));
+    layout.add(std::make_unique<juce::AudioParameterBool>(PARAM_BAND_LEFT_ENABLED, "Left Enabled", true));
+    layout.add(std::make_unique<juce::AudioParameterBool>(PARAM_BAND_RIGHT_ENABLED, "Right Enabled", true));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(PARAM_BAND_LEFT_FREQ, "Left Freq", juce::NormalisableRange<float>(20.0f, 19999.0f, 1.0f, 0.25f), 150.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(PARAM_BAND_RIGHT_FREQ, "Right Freq", juce::NormalisableRange<float>(21.0f, 20000.0f, 1.0f, 0.25f), 5000.0f));
+
+    return layout;
+}
+
 //==============================================================================
 WhiteDuckAudioProcessor::WhiteDuckAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
-     : AudioProcessor (BusesProperties()
+    : AudioProcessor (BusesProperties()
                      #if ! JucePlugin_IsMidiEffect
                       #if ! JucePlugin_IsSynth
                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
                       #endif
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
-                       )
+                   ),
+      apvts(*this, nullptr, "PARAMETERS", createParameterLayout())
+#else
+    : apvts(*this, nullptr, "PARAMETERS", createParameterLayout())
 #endif
 {
     // Initialize bands with default values (will be overridden by setStateInformation if state exists)
     initializeBands();
+    syncParametersFromState();
 }
 
 WhiteDuckAudioProcessor::~WhiteDuckAudioProcessor()
@@ -96,10 +141,8 @@ void WhiteDuckAudioProcessor::changeProgramName (int index, const juce::String& 
 void WhiteDuckAudioProcessor::prepareToPlay (double newSampleRate, int samplesPerBlock)
 {
     sampleRate = newSampleRate;
-    
-    // Initialize envelope times
-    duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
-    duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
+
+    syncParametersFromState();
     
     // Update filter coefficients with current band settings
     // (initializeBands is called only in constructor to preserve loaded state)
@@ -151,10 +194,11 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-    float effectiveAttackMs = attackTimeMs;
-    float effectiveReleaseMs = releaseTimeMs;
+    if (auto* syncParam = apvts.getRawParameterValue(PARAM_BPM_SYNC))
+    {
+        bpmSyncEnabled = syncParam->load() > 0.5f;
+    }
 
-    // Get BPM from DAW if BPM sync mode is enabled
     if (bpmSyncEnabled)
     {
         if (auto playHead = getPlayHead())
@@ -164,21 +208,12 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             {
                 auto bpmValue = posInfo->getBpm();
                 if (bpmValue.hasValue() && *bpmValue > 0)
-                {
                     bpmFromDAW = static_cast<float>(*bpmValue);
-                }
             }
         }
-
-        // In Sync mode, only Release time is recalculated from note value.
-        // Attack remains in milliseconds regardless of Sync mode.
-        effectiveReleaseMs = calculateTimeFromBpm(releaseNoteValue);
-        releaseTimeMs = effectiveReleaseMs;
     }
 
-    // Keep envelope coefficients in sync with effective times for this block.
-    duckingEnvelope.setAttackTime(sampleRate, effectiveAttackMs);
-    duckingEnvelope.setReleaseTime(sampleRate, effectiveReleaseMs);
+    syncParametersFromState();
 
     // Clear output channels that don't have input
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
@@ -188,7 +223,7 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     int numSamples = buffer.getNumSamples();
 
     // Build per-sample trigger map so Attack can start before note-on timing.
-    const int attackSamples = juce::jmax(0, static_cast<int>(std::ceil(sampleRate * effectiveAttackMs / 1000.0)));
+    const int attackSamples = juce::jmax(0, static_cast<int>(std::ceil(sampleRate * attackTimeMs / 1000.0)));
     std::vector<bool> triggerAtSample(static_cast<size_t>(numSamples), false);
     std::vector<int> catchUpSamplesAtTrigger(static_cast<size_t>(numSamples), 0);
 
@@ -321,95 +356,139 @@ juce::AudioProcessorEditor* WhiteDuckAudioProcessor::createEditor()
 //==============================================================================
 void WhiteDuckAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    juce::MemoryOutputStream mos(destData, true);
-    
-    // Save version number
-    mos.writeInt(3);  // Version 3 - includes BPM sync parameters
-    
-    // Global parameters
-    mos.writeFloat(mixAmount);
-    mos.writeFloat(attackTimeMs);
-    mos.writeFloat(releaseTimeMs);
-    mos.writeInt(midiNoteToTrigger);
-    
-    // BPM Sync parameters (v3)
-    mos.writeInt(bpmSyncEnabled ? 1 : 0);  // Save mode toggle state
-    mos.writeFloat(DEFAULT_BPM);  // Placeholder, actual BPM comes from DAW at runtime
-    mos.writeInt(0);  // attackNoteValue removed (Attack is now always in ms)
-    mos.writeInt(static_cast<int>(releaseNoteValue));
-    
-    // Band parameters - use int (0/1) instead of bool for consistency
-    for (int b = 0; b < NUM_BANDS; ++b)
+    if (auto xmlState = apvts.copyState().createXml())
     {
-        mos.writeFloat(duckingBands[b].leftFreq);
-        mos.writeFloat(duckingBands[b].rightFreq);
-        mos.writeInt(duckingBands[b].enabled ? 1 : 0);
-        mos.writeInt(duckingBands[b].leftEnabled ? 1 : 0);
-        mos.writeInt(duckingBands[b].rightEnabled ? 1 : 0);
+        auto xmlString = xmlState->toString();
+        destData.append(xmlString.toRawUTF8(), xmlString.getNumBytesAsUTF8());
     }
 }
 
 void WhiteDuckAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    juce::MemoryInputStream mis(data, sizeInBytes, false);
-    
-    if (sizeInBytes < 20)  // Minimum: version(4) + mix(4) + attack(4) + release(4) + midi(4)
-        return;
-    
-    int version = mis.readInt();
-    
-    if (version == 1 || version == 2 || version == 3)
+    auto xmlString = juce::String::fromUTF8(static_cast<const char*>(data), sizeInBytes);
+    if (xmlString.isNotEmpty())
     {
-        mixAmount = mis.readFloat();
-        attackTimeMs = mis.readFloat();
-        releaseTimeMs = mis.readFloat();
-        midiNoteToTrigger = mis.readInt();
-        
-        duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
-        duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
-        
-        // Load BPM Sync parameters (v3 only)
-        if (version == 3)
+        if (auto xmlState = juce::parseXML(xmlString))
         {
-            if (mis.getPosition() + 16 <= mis.getTotalLength())  // 4 ints = 16 bytes
+            auto newState = juce::ValueTree::fromXml(*xmlState);
+            if (newState.isValid())
             {
-                bpmSyncEnabled = mis.readInt() != 0;  // Load mode toggle state
-                float savedBpm = mis.readFloat();  // Load placeholder (will be overridden by DAW BPM)
-                mis.readInt();  // Skip former attackNoteValue (now unused)
-                releaseNoteValue = static_cast<NoteValue>(mis.readInt());
-                // Update times with current settings
-                if (bpmSyncEnabled)
-                {
-                    updateAttackReleaseFromDawBpm();
-                }
+                apvts.replaceState(newState);
+                syncParametersFromState();
+                return;
             }
-        }
-        
-        // Load band parameters
-        for (int b = 0; b < NUM_BANDS; ++b)
-        {
-            // Version 2+ requires 20 bytes per band (leftFreq + rightFreq + enabled + leftEnabled + rightEnabled)
-            int bytesNeeded = (version == 1) ? 12 : 20;
-            if (mis.getPosition() + bytesNeeded <= mis.getTotalLength())
-            {
-                duckingBands[b].leftFreq = mis.readFloat();
-                duckingBands[b].rightFreq = mis.readFloat();
-                duckingBands[b].enabled = mis.readInt() != 0;
-                
-                if (version >= 2)
-                {
-                    duckingBands[b].leftEnabled = mis.readInt() != 0;
-                    duckingBands[b].rightEnabled = mis.readInt() != 0;
-                }
-            }
-        }
-        
-        // Only update coefficients if sampleRate is valid (will be called again in prepareToPlay)
-        if (sampleRate > 1000.0)  // Sanity check - sample rate should be at least 44100
-        {
-            updateBandCoefficients();
         }
     }
+
+    juce::MemoryInputStream mis(data, sizeInBytes, false);
+
+    if (sizeInBytes < 20)
+        return;
+
+    const int version = mis.readInt();
+
+    if (version == 1 || version == 2 || version == 3)
+    {
+        const float savedMix = mis.readFloat();
+        const float savedAttack = mis.readFloat();
+        const float savedRelease = mis.readFloat();
+        const int savedMidiNote = mis.readInt();
+
+        setParameterValue<juce::RangedAudioParameter>(apvts, PARAM_MIX, savedMix);
+        setParameterValue<juce::RangedAudioParameter>(apvts, PARAM_ATTACK_MS, savedAttack);
+        setParameterValue<juce::RangedAudioParameter>(apvts, PARAM_RELEASE_MS, savedRelease);
+        setParameterValue<juce::RangedAudioParameter>(apvts, PARAM_MIDI_NOTE, static_cast<float>(savedMidiNote));
+
+        if (version == 3)
+        {
+            if (mis.getPosition() + 16 <= mis.getTotalLength())
+            {
+                const bool savedSync = mis.readInt() != 0;
+                mis.readFloat();
+                mis.readInt();
+                const int savedReleaseNote = mis.readInt();
+
+                setParameterValue<juce::AudioParameterBool>(apvts, PARAM_BPM_SYNC, savedSync ? 1.0f : 0.0f);
+                setParameterValue<juce::AudioParameterChoice>(apvts, PARAM_RELEASE_NOTE, static_cast<float>(savedReleaseNote));
+            }
+        }
+
+        for (int b = 0; b < NUM_BANDS; ++b)
+        {
+            const int bytesNeeded = (version == 1) ? 12 : 20;
+            if (mis.getPosition() + bytesNeeded <= mis.getTotalLength())
+            {
+                const float leftFreq = mis.readFloat();
+                const float rightFreq = mis.readFloat();
+                const bool enabled = mis.readInt() != 0;
+
+                setParameterValue<juce::RangedAudioParameter>(apvts, PARAM_BAND_LEFT_FREQ, leftFreq);
+                setParameterValue<juce::RangedAudioParameter>(apvts, PARAM_BAND_RIGHT_FREQ, rightFreq);
+                setParameterValue<juce::AudioParameterBool>(apvts, PARAM_BAND_ENABLED, enabled ? 1.0f : 0.0f);
+
+                if (version >= 2)
+                {
+                    const bool leftEnabled = mis.readInt() != 0;
+                    const bool rightEnabled = mis.readInt() != 0;
+                    setParameterValue<juce::AudioParameterBool>(apvts, PARAM_BAND_LEFT_ENABLED, leftEnabled ? 1.0f : 0.0f);
+                    setParameterValue<juce::AudioParameterBool>(apvts, PARAM_BAND_RIGHT_ENABLED, rightEnabled ? 1.0f : 0.0f);
+                }
+            }
+        }
+
+        syncParametersFromState();
+    }
+}
+
+void WhiteDuckAudioProcessor::syncParametersFromState()
+{
+    if (auto* param = apvts.getRawParameterValue(PARAM_MIX))
+        mixAmount = param->load();
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_ATTACK_MS))
+        attackTimeMs = param->load();
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_RELEASE_MS))
+        manualReleaseTimeMs = param->load();
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_MIDI_NOTE))
+        midiNoteToTrigger = static_cast<int>(std::round(param->load()));
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_BPM_SYNC))
+        bpmSyncEnabled = param->load() > 0.5f;
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_ATTACK_CURVE))
+        duckingEnvelope.setAttackCurve(static_cast<DuckingEnvelope::CurveType>(static_cast<int>(std::round(param->load()))));
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_RELEASE_CURVE))
+        duckingEnvelope.setReleaseCurve(static_cast<DuckingEnvelope::CurveType>(static_cast<int>(std::round(param->load()))));
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_RELEASE_NOTE))
+        releaseNoteValue = static_cast<NoteValue>(static_cast<int>(std::round(param->load())));
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_BAND_ENABLED))
+        duckingBands[0].enabled = param->load() > 0.5f;
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_BAND_LEFT_ENABLED))
+        duckingBands[0].leftEnabled = param->load() > 0.5f;
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_BAND_RIGHT_ENABLED))
+        duckingBands[0].rightEnabled = param->load() > 0.5f;
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_BAND_LEFT_FREQ))
+        duckingBands[0].leftFreq = param->load();
+
+    if (auto* param = apvts.getRawParameterValue(PARAM_BAND_RIGHT_FREQ))
+        duckingBands[0].rightFreq = param->load();
+
+    if (bpmSyncEnabled)
+        releaseTimeMs = calculateTimeFromBpm(releaseNoteValue);
+    else
+        releaseTimeMs = manualReleaseTimeMs;
+
+    duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
+    duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
+    updateBandCoefficients();
 }
 
 //==============================================================================

@@ -316,6 +316,10 @@ class WhiteDuckAudioProcessor  : public juce::AudioProcessor
 {
 public:
     //==============================================================================
+    using APVTS = juce::AudioProcessorValueTreeState;
+
+    static APVTS::ParameterLayout createParameterLayout();
+
     WhiteDuckAudioProcessor();
     ~WhiteDuckAudioProcessor() override;
 
@@ -351,6 +355,23 @@ public:
     //==============================================================================
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
+
+    APVTS& getValueTreeState() { return apvts; }
+    const APVTS& getValueTreeState() const { return apvts; }
+
+    static constexpr const char* PARAM_MIX = "mix";
+    static constexpr const char* PARAM_ATTACK_MS = "attackMs";
+    static constexpr const char* PARAM_RELEASE_MS = "releaseMs";
+    static constexpr const char* PARAM_MIDI_NOTE = "midiNote";
+    static constexpr const char* PARAM_BPM_SYNC = "bpmSync";
+    static constexpr const char* PARAM_ATTACK_CURVE = "attackCurve";
+    static constexpr const char* PARAM_RELEASE_CURVE = "releaseCurve";
+    static constexpr const char* PARAM_RELEASE_NOTE = "releaseNote";
+    static constexpr const char* PARAM_BAND_ENABLED = "bandEnabled";
+    static constexpr const char* PARAM_BAND_LEFT_ENABLED = "bandLeftEnabled";
+    static constexpr const char* PARAM_BAND_RIGHT_ENABLED = "bandRightEnabled";
+    static constexpr const char* PARAM_BAND_LEFT_FREQ = "bandLeftFreq";
+    static constexpr const char* PARAM_BAND_RIGHT_FREQ = "bandRightFreq";
     
     // Note value enum for BPM sync (must be before BPM sync methods)
     enum class NoteValue {
@@ -438,7 +459,28 @@ public:
 
         duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
     }
-    bool getBpmSyncMode() const { return bpmSyncEnabled; }
+    bool getBpmSyncMode() const
+    {
+        if (auto* param = apvts.getRawParameterValue(PARAM_BPM_SYNC))
+            return param->load() > 0.5f;
+        return bpmSyncEnabled;
+    }
+
+    float getDisplayedReleaseTimeMs() const
+    {
+        const bool syncMode = getBpmSyncMode();
+
+        if (!syncMode)
+            return manualReleaseTimeMs;
+
+        if (auto* param = apvts.getRawParameterValue(PARAM_RELEASE_NOTE))
+        {
+            const auto note = static_cast<NoteValue>(static_cast<int>(std::round(param->load())));
+            return calculateTimeFromBpm(note);
+        }
+
+        return releaseTimeMs;
+    }
     
     // Diagnostic: Check if bandpass filter is working
     
@@ -585,9 +627,12 @@ public:
     static constexpr float DEFAULT_BPM = 120.0f;
 
 private:
+    void syncParametersFromState();
+
     //==============================================================================
     // MIDI and Ducking parameters
     DuckingEnvelope duckingEnvelope;
+    APVTS apvts;
     
     double sampleRate = 44100.0;
     int midiNoteToTrigger = 60; // Middle C by default

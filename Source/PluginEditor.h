@@ -40,7 +40,8 @@ private:
 class WhiteDuckAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                        public juce::Slider::Listener,
                                        public juce::Button::Listener,
-                                       public juce::ComboBox::Listener
+                                       public juce::ComboBox::Listener,
+                                       public juce::Timer
 {
 public:
     WhiteDuckAudioProcessorEditor (WhiteDuckAudioProcessor&);
@@ -53,6 +54,7 @@ public:
     void sliderValueChanged(juce::Slider* slider) override;
     void buttonClicked(juce::Button* button) override;
     void comboBoxChanged(juce::ComboBox* comboBox) override;
+    void timerCallback() override;
     
     void updateBandUI(int bandIndex);
     void updateModeUI();  // Update UI based on BPM sync mode
@@ -96,6 +98,23 @@ private:
     
     juce::ComboBox releaseNoteComboBox;
     juce::Label releaseNoteLabel;
+
+    using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+
+    std::unique_ptr<SliderAttachment> attackAttachment;
+    std::unique_ptr<SliderAttachment> releaseAttachment;
+    std::unique_ptr<SliderAttachment> mixAttachment;
+    std::unique_ptr<SliderAttachment> midiNoteAttachment;
+    std::unique_ptr<SliderAttachment> leftFreqAttachment;
+    std::unique_ptr<SliderAttachment> rightFreqAttachment;
+    std::unique_ptr<ButtonAttachment> bpmSyncAttachment;
+    std::unique_ptr<ButtonAttachment> enableLeftAttachment;
+    std::unique_ptr<ButtonAttachment> enableRightAttachment;
+    std::unique_ptr<ComboBoxAttachment> attackCurveAttachment;
+    std::unique_ptr<ComboBoxAttachment> releaseCurveAttachment;
+    std::unique_ptr<ComboBoxAttachment> releaseNoteAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WhiteDuckAudioProcessorEditor)
 };
