@@ -217,6 +217,29 @@ public:
         
         return currentLevel;
     }
+
+    void advanceAttackSamples(int numSamples)
+    {
+        if (numSamples <= 0)
+            return;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            if (phase != Phase::Attack)
+                break;
+
+            currentLevel -= attackStep;
+            if (currentLevel < 0.01f)
+            {
+                currentLevel = 0.01f;
+                phase = Phase::Release;
+                break;
+            }
+        }
+
+        if (std::abs(currentLevel) < 1e-10f)
+            currentLevel = 1.0f;
+    }
     
     bool getIsActive() const { return phase != Phase::Idle; }
     float getCurrentLevel() const { return currentLevel; }
@@ -439,7 +462,7 @@ public:
     
     void setAttackNoteValue(int noteIndex)
     {
-        attackNoteValue = static_cast<NoteValue>(juce::jlimit(0, 8, noteIndex));
+        attackNoteValue = static_cast<NoteValue>(juce::jlimit(0, 12, noteIndex));
         if (bpmSyncEnabled)
         {
             attackTimeMs = calculateTimeFromBpm(attackNoteValue);
@@ -449,7 +472,7 @@ public:
     
     void setReleaseNoteValue(int noteIndex)
     {
-        releaseNoteValue = static_cast<NoteValue>(juce::jlimit(0, 8, noteIndex));
+        releaseNoteValue = static_cast<NoteValue>(juce::jlimit(0, 12, noteIndex));
         if (bpmSyncEnabled)
         {
             releaseTimeMs = calculateTimeFromBpm(releaseNoteValue);

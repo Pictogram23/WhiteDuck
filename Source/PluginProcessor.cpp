@@ -174,30 +174,44 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    // Process MIDI messages to trigger ducking envelope
+    // Apply ducking to audio with band processing
+    int numSamples = buffer.getNumSamples();
+
+    // Build per-sample trigger map so Attack can start before note-on timing.
+    const int attackSamples = juce::jmax(0, static_cast<int>(std::ceil(sampleRate * attackTimeMs / 1000.0)));
+    std::vector<bool> triggerAtSample(static_cast<size_t>(numSamples), false);
+    std::vector<int> catchUpSamplesAtTrigger(static_cast<size_t>(numSamples), 0);
+
     for (auto metadata : midiMessages)
     {
-        auto msg = metadata.getMessage();
-        if (msg.isNoteOn())
+        const auto msg = metadata.getMessage();
+        if (msg.isNoteOn() && msg.getNoteNumber() == midiNoteToTrigger)
         {
-            if (msg.getNoteNumber() == midiNoteToTrigger)
-            {
-                // Trigger new attack - do NOT reset filter to maintain ducking continuity
-                duckingEnvelope.trigger();
-            }
+            const int noteOnSample = juce::jlimit(0, numSamples - 1, metadata.samplePosition);
+            const int triggerSample = juce::jmax(0, noteOnSample - attackSamples);
+            triggerAtSample[static_cast<size_t>(triggerSample)] = true;
+
+            // If trigger had to be clamped to block start, fast-forward Attack to
+            // emulate the part that should have happened before this block.
+            const int missingSamples = juce::jmax(0, attackSamples - noteOnSample);
+            catchUpSamplesAtTrigger[static_cast<size_t>(triggerSample)] =
+                juce::jmax(catchUpSamplesAtTrigger[static_cast<size_t>(triggerSample)], missingSamples);
         }
     }
-    
+
     // Clear MIDI messages - no need to pass them through
     midiMessages.clear();
 
-    // Apply ducking to audio with band processing
-    int numSamples = buffer.getNumSamples();
-    
     // Pre-calculate envelope levels for all samples (for consistent L/R processing)
     std::vector<float> envelopeLevels(numSamples);
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        if (triggerAtSample[static_cast<size_t>(sample)])
+        {
+            duckingEnvelope.trigger();
+            duckingEnvelope.advanceAttackSamples(catchUpSamplesAtTrigger[static_cast<size_t>(sample)]);
+        }
+
         envelopeLevels[sample] = duckingEnvelope.process();
     }
     
