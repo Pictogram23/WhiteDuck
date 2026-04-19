@@ -454,20 +454,9 @@ public:
     void updateAttackReleaseFromDawBpm()
     {
         // Called from processBlock() with current DAW BPM
-        attackTimeMs = calculateTimeFromBpm(attackNoteValue);
+        // Attack is now always in milliseconds, only Release is calculated from note value
         releaseTimeMs = calculateTimeFromBpm(releaseNoteValue);
-        duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
         duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
-    }
-    
-    void setAttackNoteValue(int noteIndex)
-    {
-        attackNoteValue = static_cast<NoteValue>(juce::jlimit(0, 12, noteIndex));
-        if (bpmSyncEnabled)
-        {
-            attackTimeMs = calculateTimeFromBpm(attackNoteValue);
-            duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
-        }
     }
     
     void setReleaseNoteValue(int noteIndex)
@@ -480,7 +469,6 @@ public:
         }
     }
     
-    int getAttackNoteValue() const { return static_cast<int>(attackNoteValue); }
     int getReleaseNoteValue() const { return static_cast<int>(releaseNoteValue); }
     
 
@@ -528,7 +516,6 @@ private:
     // BPM sync parameters
     bool bpmSyncEnabled = false;      // Toggle between seconds (false) and BPM sync (true)
     float bpmFromDAW = DEFAULT_BPM;   // Current BPM from DAW
-    NoteValue attackNoteValue = NoteValue::Sixteenth;   // Default: 16分音符
     NoteValue releaseNoteValue = NoteValue::Quarter;    // Default: 4分音符
     
     // Band ducking parameters

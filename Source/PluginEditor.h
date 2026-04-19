@@ -87,10 +87,6 @@ private:
     ResetableSlider rightFreqSlider{5000.0f};
     juce::Label rightFreqLabel;
     
-    // Note value selection (BPM sync is automatic from DAW)
-    juce::ComboBox attackNoteComboBox;
-    juce::Label attackNoteLabel;
-    
     juce::ComboBox releaseNoteComboBox;
     juce::Label releaseNoteLabel;
 

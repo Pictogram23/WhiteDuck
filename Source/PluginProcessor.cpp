@@ -151,6 +151,9 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+    float effectiveAttackMs = attackTimeMs;
+    float effectiveReleaseMs = releaseTimeMs;
+
     // Get BPM from DAW if BPM sync mode is enabled
     if (bpmSyncEnabled)
     {
@@ -163,12 +166,19 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 if (bpmValue.hasValue() && *bpmValue > 0)
                 {
                     bpmFromDAW = static_cast<float>(*bpmValue);
-                    // Update attack/release times based on current DAW BPM
-                    updateAttackReleaseFromDawBpm();
                 }
             }
         }
+
+        // In Sync mode, only Release time is recalculated from note value.
+        // Attack remains in milliseconds regardless of Sync mode.
+        effectiveReleaseMs = calculateTimeFromBpm(releaseNoteValue);
+        releaseTimeMs = effectiveReleaseMs;
     }
+
+    // Keep envelope coefficients in sync with effective times for this block.
+    duckingEnvelope.setAttackTime(sampleRate, effectiveAttackMs);
+    duckingEnvelope.setReleaseTime(sampleRate, effectiveReleaseMs);
 
     // Clear output channels that don't have input
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
@@ -178,7 +188,7 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     int numSamples = buffer.getNumSamples();
 
     // Build per-sample trigger map so Attack can start before note-on timing.
-    const int attackSamples = juce::jmax(0, static_cast<int>(std::ceil(sampleRate * attackTimeMs / 1000.0)));
+    const int attackSamples = juce::jmax(0, static_cast<int>(std::ceil(sampleRate * effectiveAttackMs / 1000.0)));
     std::vector<bool> triggerAtSample(static_cast<size_t>(numSamples), false);
     std::vector<int> catchUpSamplesAtTrigger(static_cast<size_t>(numSamples), 0);
 
@@ -325,7 +335,7 @@ void WhiteDuckAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     // BPM Sync parameters (v3)
     mos.writeInt(bpmSyncEnabled ? 1 : 0);  // Save mode toggle state
     mos.writeFloat(DEFAULT_BPM);  // Placeholder, actual BPM comes from DAW at runtime
-    mos.writeInt(static_cast<int>(attackNoteValue));
+    mos.writeInt(0);  // attackNoteValue removed (Attack is now always in ms)
     mos.writeInt(static_cast<int>(releaseNoteValue));
     
     // Band parameters - use int (0/1) instead of bool for consistency
@@ -365,7 +375,7 @@ void WhiteDuckAudioProcessor::setStateInformation (const void* data, int sizeInB
             {
                 bpmSyncEnabled = mis.readInt() != 0;  // Load mode toggle state
                 float savedBpm = mis.readFloat();  // Load placeholder (will be overridden by DAW BPM)
-                attackNoteValue = static_cast<NoteValue>(mis.readInt());
+                mis.readInt();  // Skip former attackNoteValue (now unused)
                 releaseNoteValue = static_cast<NoteValue>(mis.readInt());
                 // Update times with current settings
                 if (bpmSyncEnabled)
