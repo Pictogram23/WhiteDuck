@@ -109,23 +109,23 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     addAndMakeVisible(releaseNoteLabel);
     
     // Curve type combo boxes
-    attackCurveComboBox.addItem("Linear", 1);
-    attackCurveComboBox.addItem("Exponential", 2);
-    attackCurveComboBox.addItem("Logarithmic", 3);
+    attackCurveComboBox.addItem("Balanced", 1);
+    attackCurveComboBox.addItem("Slow", 2);
+    attackCurveComboBox.addItem("Fast", 3);
     attackCurveComboBox.setSelectedId(audioProcessor.getAttackCurveType() + 1, juce::dontSendNotification);
     attackCurveComboBox.addListener(this);
     addAndMakeVisible(attackCurveComboBox);
-    attackCurveLabel.setText("Atk Curve", juce::dontSendNotification);
+    attackCurveLabel.setText("Attack Curve", juce::dontSendNotification);
     attackCurveLabel.attachToComponent(&attackCurveComboBox, true);
     addAndMakeVisible(attackCurveLabel);
     
-    releaseCurveComboBox.addItem("Linear", 1);
-    releaseCurveComboBox.addItem("Exponential", 2);
-    releaseCurveComboBox.addItem("Logarithmic", 3);
+    releaseCurveComboBox.addItem("Balanced", 1);
+    releaseCurveComboBox.addItem("Slow", 2);
+    releaseCurveComboBox.addItem("Fast", 3);
     releaseCurveComboBox.setSelectedId(audioProcessor.getReleaseCurveType() + 1, juce::dontSendNotification);
     releaseCurveComboBox.addListener(this);
     addAndMakeVisible(releaseCurveComboBox);
-    releaseCurveLabel.setText("Rel Curve", juce::dontSendNotification);
+    releaseCurveLabel.setText("Release Curve", juce::dontSendNotification);
     releaseCurveLabel.attachToComponent(&releaseCurveComboBox, true);
     addAndMakeVisible(releaseCurveLabel);
     
@@ -136,7 +136,7 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     // Initialize UI based on mode
     updateModeUI();
     
-    setSize(550, 360);  // Height increased for curve controls
+    setSize(640, 380);  // Wider layout to avoid text clipping
 }
 
 WhiteDuckAudioProcessorEditor::~WhiteDuckAudioProcessorEditor()
@@ -155,14 +155,14 @@ void WhiteDuckAudioProcessorEditor::paint (juce::Graphics& g)
 
 void WhiteDuckAudioProcessorEditor::resized()
 {
-    int labelWidth = 70;
+    int labelWidth = 110;
     int sliderHeight = 25;
     int borderY = 35;  // Increased to make room for title
     int spacing = 28;
     
     // Mode toggle button (below title area)
-    bpmModeLabel.setBounds(10, borderY - 25, 65, 20);
-    bpmSyncModeButton.setBounds(78, borderY - 25, 80, 20);
+    bpmModeLabel.setBounds(10, borderY - 25, 95, 20);
+    bpmSyncModeButton.setBounds(108, borderY - 25, 110, 20);
     
     // Global parameters section
     int yOffset = borderY;
@@ -234,6 +234,9 @@ void WhiteDuckAudioProcessorEditor::buttonClicked(juce::Button* button)
     {
         bool newMode = bpmSyncModeButton.getToggleState();
         audioProcessor.setBpmSyncMode(newMode);
+
+        // Reflect updated release value immediately after mode switch.
+        releaseSlider.setValue(audioProcessor.getReleaseTime(), juce::dontSendNotification);
         updateModeUI();
     }
     else if (button == &enableLeftButton)
@@ -278,5 +281,5 @@ void WhiteDuckAudioProcessorEditor::updateModeUI()
     
     // Attack is always in milliseconds
     attackLabel.setText("Attack (ms)", juce::dontSendNotification);
-    releaseLabel.setText(isBpmSync ? "Release" : "Release (ms)", juce::dontSendNotification);
+    releaseLabel.setText(isBpmSync ? "Release (Note)" : "Release (ms)", juce::dontSendNotification);
 }

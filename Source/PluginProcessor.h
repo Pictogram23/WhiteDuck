@@ -412,6 +412,7 @@ public:
     void setReleaseTime(float newReleaseMs) 
     { 
         releaseTimeMs = newReleaseMs;
+        manualReleaseTimeMs = newReleaseMs;
         duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
     }
     float getReleaseTime() const { return releaseTimeMs; }
@@ -423,6 +424,19 @@ public:
     void setBpmSyncMode(bool enabled)
     {
         bpmSyncEnabled = enabled;
+
+        if (bpmSyncEnabled)
+        {
+            // Apply note-based release immediately when Sync mode turns on.
+            releaseTimeMs = calculateTimeFromBpm(releaseNoteValue);
+        }
+        else
+        {
+            // Restore previously chosen ms release when Sync mode turns off.
+            releaseTimeMs = manualReleaseTimeMs;
+        }
+
+        duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
     }
     bool getBpmSyncMode() const { return bpmSyncEnabled; }
     
@@ -581,6 +595,7 @@ private:
     // Ducking parameters
     float attackTimeMs = 5.0f;
     float releaseTimeMs = 100.0f;
+    float manualReleaseTimeMs = 100.0f;
     float mixAmount = 0.5f; // 0.0 = no ducking, 1.0 = full ducking
     
     // BPM sync parameters
