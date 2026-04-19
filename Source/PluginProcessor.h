@@ -176,7 +176,15 @@ public:
     
     void trigger()
     {
-        currentLevel = 1.0f;
+        // Do NOT reset currentLevel to 1.0 - maintain continuity
+        // If already in Release, re-trigger Attack from current level
+        // If in Idle, start from 1.0
+        if (phase == Phase::Idle)
+        {
+            currentLevel = 1.0f;
+        }
+        // If already in Attack or Release, just switch to Attack
+        // without resetting level - ensures smooth transition
         phase = Phase::Attack;
     }
     
