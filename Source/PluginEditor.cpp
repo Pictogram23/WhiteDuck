@@ -108,6 +108,27 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     releaseNoteLabel.attachToComponent(&releaseNoteComboBox, true);
     addAndMakeVisible(releaseNoteLabel);
     
+    // Curve type combo boxes
+    attackCurveComboBox.addItem("Linear", 1);
+    attackCurveComboBox.addItem("Exponential", 2);
+    attackCurveComboBox.addItem("Logarithmic", 3);
+    attackCurveComboBox.setSelectedId(audioProcessor.getAttackCurveType() + 1, juce::dontSendNotification);
+    attackCurveComboBox.addListener(this);
+    addAndMakeVisible(attackCurveComboBox);
+    attackCurveLabel.setText("Atk Curve", juce::dontSendNotification);
+    attackCurveLabel.attachToComponent(&attackCurveComboBox, true);
+    addAndMakeVisible(attackCurveLabel);
+    
+    releaseCurveComboBox.addItem("Linear", 1);
+    releaseCurveComboBox.addItem("Exponential", 2);
+    releaseCurveComboBox.addItem("Logarithmic", 3);
+    releaseCurveComboBox.setSelectedId(audioProcessor.getReleaseCurveType() + 1, juce::dontSendNotification);
+    releaseCurveComboBox.addListener(this);
+    addAndMakeVisible(releaseCurveComboBox);
+    releaseCurveLabel.setText("Rel Curve", juce::dontSendNotification);
+    releaseCurveLabel.attachToComponent(&releaseCurveComboBox, true);
+    addAndMakeVisible(releaseCurveLabel);
+    
     // Update UI with current band state
     enableLeftButton.setToggleState(audioProcessor.isBandLeftEnabled(0), juce::dontSendNotification);
     enableRightButton.setToggleState(audioProcessor.isBandRightEnabled(0), juce::dontSendNotification);
@@ -115,7 +136,7 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     // Initialize UI based on mode
     updateModeUI();
     
-    setSize(550, 320);  // Height reduced (Attack Note removed)
+    setSize(550, 360);  // Height increased for curve controls
 }
 
 WhiteDuckAudioProcessorEditor::~WhiteDuckAudioProcessorEditor()
@@ -170,6 +191,13 @@ void WhiteDuckAudioProcessorEditor::resized()
     // Release note selection (BPM sync)
     int releaseNoteY = rightFreqY + spacing + 10;
     releaseNoteComboBox.setBounds(labelWidth + 10, releaseNoteY, getWidth() - labelWidth - 20, 20);
+    
+    // Curve type selection
+    int curvesSectionY = releaseNoteY + spacing + 10;
+    attackCurveComboBox.setBounds(labelWidth + 10, curvesSectionY, getWidth() - labelWidth - 20, 20);
+    
+    int releaseCurveY = curvesSectionY + spacing;
+    releaseCurveComboBox.setBounds(labelWidth + 10, releaseCurveY, getWidth() - labelWidth - 20, 20);
 }
 
 void WhiteDuckAudioProcessorEditor::sliderValueChanged(juce::Slider* slider)
@@ -220,7 +248,15 @@ void WhiteDuckAudioProcessorEditor::buttonClicked(juce::Button* button)
 
 void WhiteDuckAudioProcessorEditor::comboBoxChanged(juce::ComboBox* comboBox)
 {
-    if (comboBox == &releaseNoteComboBox)
+    if (comboBox == &attackCurveComboBox)
+    {
+        audioProcessor.setAttackCurveType(comboBox->getSelectedId() - 1);
+    }
+    else if (comboBox == &releaseCurveComboBox)
+    {
+        audioProcessor.setReleaseCurveType(comboBox->getSelectedId() - 1);
+    }
+    else if (comboBox == &releaseNoteComboBox)
     {
         audioProcessor.setReleaseNoteValue(comboBox->getSelectedId() - 1);
     }

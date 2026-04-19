@@ -153,15 +153,21 @@ class DuckingEnvelope
 {
 public:
     enum class Phase { Idle, Attack, Release };
+    enum class CurveType { Linear, Exponential, Logarithmic };
     
-    DuckingEnvelope() : currentLevel(1.0f), phase(Phase::Idle) {}
+    DuckingEnvelope() : currentLevel(1.0f), phase(Phase::Idle), attackCurve(CurveType::Linear), releaseCurve(CurveType::Linear) {}
+    
+    void setAttackCurve(CurveType curve) { attackCurve = curve; }
+    void setReleaseCurve(CurveType curve) { releaseCurve = curve; }
+    CurveType getAttackCurve() const { return attackCurve; }
+    CurveType getReleaseCurve() const { return releaseCurve; }
     
     void setAttackTime(double sampleRate, float attackMs)
     {
         if (attackMs > 0.0001f)
         {
-            // Linear envelope: how much to decrease per sample
-            attackStep = 0.99f / (sampleRate * attackMs / 1000.0f);
+            // Progress-based: how much progress to advance per sample
+            attackStep = 1.0f / (sampleRate * attackMs / 1000.0f);
         }
     }
     
@@ -169,8 +175,8 @@ public:
     {
         if (releaseMs > 0.0001f)
         {
-            // Linear envelope: how much to increase per sample
-            releaseStep = 0.99f / (sampleRate * releaseMs / 1000.0f);
+            // Progress-based: how much progress to advance per sample
+            releaseStep = 1.0f / (sampleRate * releaseMs / 1000.0f);
         }
     }
     
@@ -185,28 +191,44 @@ public:
         }
         // If already in Attack or Release, just switch to Attack
         // without resetting level - ensures smooth transition
+        attackStartLevel = currentLevel;
+        attackProgress = 0.0f;  // Always reset attack progress on trigger
+        releaseProgress = 0.0f;
         phase = Phase::Attack;
     }
     
     float process()
     {
-        Phase prevPhase = phase;
-        
         if (phase == Phase::Attack)
         {
-            currentLevel -= attackStep;
-            if (currentLevel < 0.01f)
+            // Calculate progress (0.0 = start, 1.0 = end)
+            attackProgress += attackStep;
+            
+            // Apply curve to progress
+            float curveProgress = applyCurve(attackProgress, attackCurve);
+            currentLevel = attackStartLevel + (0.01f - attackStartLevel) * curveProgress;
+            
+            if (attackProgress >= 1.0f)
             {
                 currentLevel = 0.01f;
+                attackProgress = 0.0f;
+                releaseStartLevel = currentLevel;
                 phase = Phase::Release;
             }
         }
         else if (phase == Phase::Release)
         {
-            currentLevel += releaseStep;
-            if (currentLevel > 0.999f)
+            // Calculate progress (0.0 = start, 1.0 = end)
+            releaseProgress += releaseStep;
+            
+            // Apply curve to progress
+            float curveProgress = applyCurve(releaseProgress, releaseCurve);
+            currentLevel = releaseStartLevel + (1.0f - releaseStartLevel) * curveProgress;
+            
+            if (releaseProgress >= 1.0f)
             {
                 currentLevel = 1.0f;
+                releaseProgress = 0.0f;
                 phase = Phase::Idle;
             }
         }
@@ -220,18 +242,23 @@ public:
 
     void advanceAttackSamples(int numSamples)
     {
-        if (numSamples <= 0)
+        if (numSamples <= 0 || phase != Phase::Attack)
             return;
 
+        // Advance attack progress by the given number of samples
         for (int i = 0; i < numSamples; ++i)
         {
-            if (phase != Phase::Attack)
-                break;
-
-            currentLevel -= attackStep;
-            if (currentLevel < 0.01f)
+            attackProgress += attackStep;
+            
+            // Apply curve to progress
+            float curveProgress = applyCurve(attackProgress, attackCurve);
+            currentLevel = attackStartLevel + (0.01f - attackStartLevel) * curveProgress;
+            
+            if (attackProgress >= 1.0f)
             {
                 currentLevel = 0.01f;
+                attackProgress = 0.0f;
+                releaseStartLevel = currentLevel;
                 phase = Phase::Release;
                 break;
             }
@@ -246,8 +273,38 @@ public:
     Phase getPhase() const { return phase; }
     
 private:
+    float applyCurve(float progress, CurveType curve)
+    {
+        // progress: 0.0 (start) to 1.0 (end)
+        progress = juce::jlimit(0.0f, 1.0f, progress);
+        
+        switch (curve)
+        {
+            case CurveType::Linear:
+                return progress;
+            
+            case CurveType::Exponential:
+                // Exponential: starts slow, accelerates
+                return progress * progress;
+            
+            case CurveType::Logarithmic:
+                // Logarithmic: starts fast, decelerates
+                // Approximate with sqrt for smooth deceleration
+                return std::sqrt(progress);
+            
+            default:
+                return progress;
+        }
+    }
+    
     float currentLevel;
     Phase phase;
+    CurveType attackCurve;
+    CurveType releaseCurve;
+    float attackStartLevel = 1.0f;
+    float releaseStartLevel = 0.01f;
+    float attackProgress = 0.0f;   // 0.0 to 1.0
+    float releaseProgress = 0.0f;  // 0.0 to 1.0
     float attackStep = 0.0001f;
     float releaseStep = 0.0001f;
 };
@@ -471,8 +528,21 @@ public:
     
     int getReleaseNoteValue() const { return static_cast<int>(releaseNoteValue); }
     
-
+    // Curve type control
+    void setAttackCurveType(int curveIndex)
+    {
+        auto curve = static_cast<DuckingEnvelope::CurveType>(juce::jlimit(0, 2, curveIndex));
+        duckingEnvelope.setAttackCurve(curve);
+    }
     
+    void setReleaseCurveType(int curveIndex)
+    {
+        auto curve = static_cast<DuckingEnvelope::CurveType>(juce::jlimit(0, 2, curveIndex));
+        duckingEnvelope.setReleaseCurve(curve);
+    }
+    
+    int getAttackCurveType() const { return static_cast<int>(duckingEnvelope.getAttackCurve()); }
+    int getReleaseCurveType() const { return static_cast<int>(duckingEnvelope.getReleaseCurve()); }
     // Band initialization and coefficient update
     void initializeBands()
     {

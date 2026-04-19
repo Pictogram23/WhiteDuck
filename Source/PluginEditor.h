@@ -87,6 +87,13 @@ private:
     ResetableSlider rightFreqSlider{5000.0f};
     juce::Label rightFreqLabel;
     
+    // Curve type selection
+    juce::ComboBox attackCurveComboBox;
+    juce::Label attackCurveLabel;
+    
+    juce::ComboBox releaseCurveComboBox;
+    juce::Label releaseCurveLabel;
+    
     juce::ComboBox releaseNoteComboBox;
     juce::Label releaseNoteLabel;
 
