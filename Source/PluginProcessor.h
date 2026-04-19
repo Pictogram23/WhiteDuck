@@ -272,6 +272,52 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
     
+    // Note value enum for BPM sync (must be before BPM sync methods)
+    enum class NoteValue {
+        SixtyFourth = 0,         // 64分音符 (0.0625 beat)
+        DottedSixtyfourth = 1,   // 付点64分音符 (0.09375 beat)
+        ThirtySecond = 2,        // 32分音符 (0.125 beat)
+        DottedThirtySecond = 3,  // 付点32分音符 (0.1875 beat)
+        Sixteenth = 4,           // 16分音符 (0.25 beat)
+        DottedSixteenth = 5,     // 付点16分音符 (0.375 beat)
+        Eighth = 6,              // 8分音符 (0.5 beat)
+        DottedEighth = 7,        // 付点8分音符 (0.75 beat)
+        Quarter = 8,             // 4分音符 (1 beat)
+        DottedQuarter = 9,       // 付点4分音符 (1.5 beat)
+        Half = 10,               // 2分音符 (2 beat)
+        DottedHalf = 11,         // 付点2分音符 (3 beat)
+        Whole = 12               // 全音符 (4 beat)
+    };
+    
+    // Calculate milliseconds from BPM and note value
+    float calculateTimeFromBpm(NoteValue noteValue) const
+    {
+        // 1 beat (quarter note) = 60000 / BPM milliseconds
+        // Use DAW BPM if available, otherwise use default
+        float beatMs = 60000.0f / bpmFromDAW;
+        
+        float beatLength = 0.0f;
+        switch (noteValue)
+        {
+            case NoteValue::SixtyFourth:     beatLength = 0.0625f; break;   // 64分音符
+            case NoteValue::DottedSixtyfourth: beatLength = 0.09375f; break; // 付点64分音符
+            case NoteValue::ThirtySecond:   beatLength = 0.125f; break;    // 32分音符
+            case NoteValue::DottedThirtySecond: beatLength = 0.1875f; break; // 付点32分音符
+            case NoteValue::Sixteenth:      beatLength = 0.25f; break;    // 16分音符
+            case NoteValue::DottedSixteenth: beatLength = 0.375f; break;   // 付点16分音符
+            case NoteValue::Eighth:         beatLength = 0.5f; break;     // 8分音符
+            case NoteValue::DottedEighth:   beatLength = 0.75f; break;    // 付点8分音符
+            case NoteValue::Quarter:        beatLength = 1.0f; break;     // 4分音符
+            case NoteValue::DottedQuarter:  beatLength = 1.5f; break;    // 付点4分音符
+            case NoteValue::Half:           beatLength = 2.0f; break;     // 2分音符
+            case NoteValue::DottedHalf:     beatLength = 3.0f; break;    // 付点2分音符
+            case NoteValue::Whole:          beatLength = 4.0f; break;     // 全音符
+            default:                        beatLength = 1.0f; break;
+        }
+        
+        return beatMs * beatLength;
+    }
+    
     // Parameter setters and getters
     void setMixAmount(float newMix) { mixAmount = juce::jlimit(0.0f, 1.0f, newMix); }
     float getMixAmount() const { return mixAmount; }
@@ -292,6 +338,13 @@ public:
     
     void setMidiNoteToTrigger(int newNote) { midiNoteToTrigger = juce::jlimit(0, 127, newNote); }
     int getMidiNoteToTrigger() const { return midiNoteToTrigger; }
+    
+    // BPM sync mode toggle
+    void setBpmSyncMode(bool enabled)
+    {
+        bpmSyncEnabled = enabled;
+    }
+    bool getBpmSyncMode() const { return bpmSyncEnabled; }
     
     // Diagnostic: Check if bandpass filter is working
     
@@ -374,6 +427,41 @@ public:
         }
     }
     
+    // BPM is automatically synced from DAW - always enabled
+    void updateAttackReleaseFromDawBpm()
+    {
+        // Called from processBlock() with current DAW BPM
+        attackTimeMs = calculateTimeFromBpm(attackNoteValue);
+        releaseTimeMs = calculateTimeFromBpm(releaseNoteValue);
+        duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
+        duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
+    }
+    
+    void setAttackNoteValue(int noteIndex)
+    {
+        attackNoteValue = static_cast<NoteValue>(juce::jlimit(0, 8, noteIndex));
+        if (bpmSyncEnabled)
+        {
+            attackTimeMs = calculateTimeFromBpm(attackNoteValue);
+            duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
+        }
+    }
+    
+    void setReleaseNoteValue(int noteIndex)
+    {
+        releaseNoteValue = static_cast<NoteValue>(juce::jlimit(0, 8, noteIndex));
+        if (bpmSyncEnabled)
+        {
+            releaseTimeMs = calculateTimeFromBpm(releaseNoteValue);
+            duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
+        }
+    }
+    
+    int getAttackNoteValue() const { return static_cast<int>(attackNoteValue); }
+    int getReleaseNoteValue() const { return static_cast<int>(releaseNoteValue); }
+    
+
+    
     // Band initialization and coefficient update
     void initializeBands()
     {
@@ -399,6 +487,7 @@ public:
     static constexpr float DEFAULT_ATTACK = 5.0f;
     static constexpr float DEFAULT_RELEASE = 100.0f;
     static constexpr int DEFAULT_MIDI_NOTE = 60;
+    static constexpr float DEFAULT_BPM = 120.0f;
 
 private:
     //==============================================================================
@@ -412,6 +501,12 @@ private:
     float attackTimeMs = 5.0f;
     float releaseTimeMs = 100.0f;
     float mixAmount = 0.5f; // 0.0 = no ducking, 1.0 = full ducking
+    
+    // BPM sync parameters
+    bool bpmSyncEnabled = false;      // Toggle between seconds (false) and BPM sync (true)
+    float bpmFromDAW = DEFAULT_BPM;   // Current BPM from DAW
+    NoteValue attackNoteValue = NoteValue::Sixteenth;   // Default: 16分音符
+    NoteValue releaseNoteValue = NoteValue::Quarter;    // Default: 4分音符
     
     // Band ducking parameters
     static constexpr int NUM_BANDS = 2;

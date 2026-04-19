@@ -151,6 +151,25 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+    // Get BPM from DAW if BPM sync mode is enabled
+    if (bpmSyncEnabled)
+    {
+        if (auto playHead = getPlayHead())
+        {
+            auto posInfo = playHead->getPosition();
+            if (posInfo)
+            {
+                auto bpmValue = posInfo->getBpm();
+                if (bpmValue.hasValue() && *bpmValue > 0)
+                {
+                    bpmFromDAW = static_cast<float>(*bpmValue);
+                    // Update attack/release times based on current DAW BPM
+                    updateAttackReleaseFromDawBpm();
+                }
+            }
+        }
+    }
+
     // Clear output channels that don't have input
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
@@ -281,13 +300,19 @@ void WhiteDuckAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     juce::MemoryOutputStream mos(destData, true);
     
     // Save version number
-    mos.writeInt(2);  // Version 2 - includes leftEnabled/rightEnabled
+    mos.writeInt(3);  // Version 3 - includes BPM sync parameters
     
     // Global parameters
     mos.writeFloat(mixAmount);
     mos.writeFloat(attackTimeMs);
     mos.writeFloat(releaseTimeMs);
     mos.writeInt(midiNoteToTrigger);
+    
+    // BPM Sync parameters (v3)
+    mos.writeInt(bpmSyncEnabled ? 1 : 0);  // Save mode toggle state
+    mos.writeFloat(DEFAULT_BPM);  // Placeholder, actual BPM comes from DAW at runtime
+    mos.writeInt(static_cast<int>(attackNoteValue));
+    mos.writeInt(static_cast<int>(releaseNoteValue));
     
     // Band parameters - use int (0/1) instead of bool for consistency
     for (int b = 0; b < NUM_BANDS; ++b)
@@ -309,7 +334,7 @@ void WhiteDuckAudioProcessor::setStateInformation (const void* data, int sizeInB
     
     int version = mis.readInt();
     
-    if (version == 1 || version == 2)
+    if (version == 1 || version == 2 || version == 3)
     {
         mixAmount = mis.readFloat();
         attackTimeMs = mis.readFloat();
@@ -319,18 +344,35 @@ void WhiteDuckAudioProcessor::setStateInformation (const void* data, int sizeInB
         duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
         duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
         
+        // Load BPM Sync parameters (v3 only)
+        if (version == 3)
+        {
+            if (mis.getPosition() + 16 <= mis.getTotalLength())  // 4 ints = 16 bytes
+            {
+                bpmSyncEnabled = mis.readInt() != 0;  // Load mode toggle state
+                float savedBpm = mis.readFloat();  // Load placeholder (will be overridden by DAW BPM)
+                attackNoteValue = static_cast<NoteValue>(mis.readInt());
+                releaseNoteValue = static_cast<NoteValue>(mis.readInt());
+                // Update times with current settings
+                if (bpmSyncEnabled)
+                {
+                    updateAttackReleaseFromDawBpm();
+                }
+            }
+        }
+        
         // Load band parameters
         for (int b = 0; b < NUM_BANDS; ++b)
         {
-            // Version 2 requires 20 bytes per band (leftFreq + rightFreq + enabled + leftEnabled + rightEnabled)
-            int bytesNeeded = version == 2 ? 20 : 12;
+            // Version 2+ requires 20 bytes per band (leftFreq + rightFreq + enabled + leftEnabled + rightEnabled)
+            int bytesNeeded = (version == 1) ? 12 : 20;
             if (mis.getPosition() + bytesNeeded <= mis.getTotalLength())
             {
                 duckingBands[b].leftFreq = mis.readFloat();
                 duckingBands[b].rightFreq = mis.readFloat();
                 duckingBands[b].enabled = mis.readInt() != 0;
                 
-                if (version == 2)
+                if (version >= 2)
                 {
                     duckingBands[b].leftEnabled = mis.readInt() != 0;
                     duckingBands[b].rightEnabled = mis.readInt() != 0;

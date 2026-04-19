@@ -39,7 +39,8 @@ private:
 */
 class WhiteDuckAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                        public juce::Slider::Listener,
-                                       public juce::Button::Listener
+                                       public juce::Button::Listener,
+                                       public juce::ComboBox::Listener
 {
 public:
     WhiteDuckAudioProcessorEditor (WhiteDuckAudioProcessor&);
@@ -51,11 +52,17 @@ public:
     
     void sliderValueChanged(juce::Slider* slider) override;
     void buttonClicked(juce::Button* button) override;
+    void comboBoxChanged(juce::ComboBox* comboBox) override;
     
     void updateBandUI(int bandIndex);
+    void updateModeUI();  // Update UI based on BPM sync mode
 
 private:
     WhiteDuckAudioProcessor& audioProcessor;
+    
+    // Mode toggle button
+    juce::ToggleButton bpmSyncModeButton{"BPM Sync"};
+    juce::Label bpmModeLabel;
     
     // Global parameter sliders
     ResetableSlider attackSlider{WhiteDuckAudioProcessor::DEFAULT_ATTACK};
@@ -79,6 +86,13 @@ private:
     
     ResetableSlider rightFreqSlider{5000.0f};
     juce::Label rightFreqLabel;
+    
+    // Note value selection (BPM sync is automatic from DAW)
+    juce::ComboBox attackNoteComboBox;
+    juce::Label attackNoteLabel;
+    
+    juce::ComboBox releaseNoteComboBox;
+    juce::Label releaseNoteLabel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WhiteDuckAudioProcessorEditor)
 };
