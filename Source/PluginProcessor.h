@@ -25,16 +25,19 @@ public:
     {
         // Aggressive denormal flushing
         if (std::abs(input) < 1e-8f) input = 0.0f;
-        if (std::abs(z1) < 1e-8f) z1 = 0.0f;
-        if (std::abs(z2) < 1e-8f) z2 = 0.0f;
+        if (std::abs(z1) < 1e-10f) z1 = 0.0f;
+        if (std::abs(z2) < 1e-10f) z2 = 0.0f;
         
         float output = b0 * input + z1;
         z1 = b1 * input - a1 * output + z2;
         z2 = b2 * input - a2 * output;
         
-        // Flush filter state on very small values
-        if (std::abs(z1) < 1e-8f) z1 = 0.0f;
-        if (std::abs(z2) < 1e-8f) z2 = 0.0f;
+        // Flush filter state on very small values (more aggressive)
+        if (std::abs(z1) < 1e-10f) z1 = 0.0f;
+        if (std::abs(z2) < 1e-10f) z2 = 0.0f;
+        
+        // Flush output if denormal
+        if (std::abs(output) < 1e-8f) output = 0.0f;
         
         // Clip output to prevent extreme values
         output = juce::jlimit(-1.0f, 1.0f, output);
@@ -87,14 +90,17 @@ struct DuckingBand
         right = juce::jlimit(21.0f, 20000.0f, right);
         if (left >= right) right = left + 100.0f;
         
-        // Q factor for both filters (fixed at 0.707 for Butterworth response)
-        const float Q = 0.707f;
-        
         // ========== HIGH-PASS FILTER (at leftFreq) ==========
+        // Use higher Q for low frequencies to avoid instability
+        float Q_hp = juce::jlimit(0.5f, 1.0f, 100.0f / left);  // Q increases for lower frequencies
+        
         float w0_hp = 2.0f * 3.14159265f * left / sampleRate;
+        // Clamp w0 to prevent numerical issues at very low frequencies
+        w0_hp = juce::jlimit(0.001f, 3.14f, w0_hp);
+        
         float sinW0_hp = std::sin(w0_hp);
         float cosW0_hp = std::cos(w0_hp);
-        float alpha_hp = sinW0_hp / (2.0f * Q);
+        float alpha_hp = sinW0_hp / (2.0f * Q_hp);
         
         // High-pass coefficients
         float b0_hp = (1.0f + cosW0_hp) / 2.0f;
@@ -104,14 +110,21 @@ struct DuckingBand
         float a1_hp = -2.0f * cosW0_hp;
         float a2_hp = 1.0f - alpha_hp;
         
-        if (std::abs(a0_hp) < 1e-10f) a0_hp = 1.0f;
+        // Ensure stability
+        if (std::abs(a0_hp) < 1e-6f) a0_hp = 1e-6f;
         highPassFilter.setCoefficients(b0_hp / a0_hp, b1_hp / a0_hp, b2_hp / a0_hp, a1_hp / a0_hp, a2_hp / a0_hp);
         
         // ========== LOW-PASS FILTER (at rightFreq) ==========
+        // Use higher Q for low frequencies to avoid instability
+        float Q_lp = juce::jlimit(0.5f, 1.0f, 100.0f / right);  // Q increases for lower frequencies
+        
         float w0_lp = 2.0f * 3.14159265f * right / sampleRate;
+        // Clamp w0 to prevent numerical issues
+        w0_lp = juce::jlimit(0.001f, 3.14f, w0_lp);
+        
         float sinW0_lp = std::sin(w0_lp);
         float cosW0_lp = std::cos(w0_lp);
-        float alpha_lp = sinW0_lp / (2.0f * Q);
+        float alpha_lp = sinW0_lp / (2.0f * Q_lp);
         
         // Low-pass coefficients
         float b0_lp = (1.0f - cosW0_lp) / 2.0f;
@@ -121,7 +134,8 @@ struct DuckingBand
         float a1_lp = -2.0f * cosW0_lp;
         float a2_lp = 1.0f - alpha_lp;
         
-        if (std::abs(a0_lp) < 1e-10f) a0_lp = 1.0f;
+        // Ensure stability
+        if (std::abs(a0_lp) < 1e-6f) a0_lp = 1e-6f;
         lowPassFilter.setCoefficients(b0_lp / a0_lp, b1_lp / a0_lp, b2_lp / a0_lp, a1_lp / a0_lp, a2_lp / a0_lp);
     }
 };

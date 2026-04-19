@@ -226,14 +226,21 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             // Both Attack and Release process the band through both filters (in series)
             if (anyBandEnabled && gainReduction < 0.99f)
             {
+                // Denormal flush on input
+                if (std::abs(output) < 1e-10f) output = 0.0f;
+                
                 // Extract the band component (LEFT to RIGHT frequencies only)
                 // Apply HIGH-PASS filter first (removes frequencies below LEFT)
                 float bandComponent = duckingBands[0].highPassFilter.process(output);
+                
+                // Aggressive denormal flush between filters
+                if (std::abs(bandComponent) < 1e-10f) bandComponent = 0.0f;
+                
                 // Then apply LOW-PASS filter (removes frequencies above RIGHT)
                 bandComponent = duckingBands[0].lowPassFilter.process(bandComponent);
                 
                 // Clamp band component with denormal flush
-                if (std::abs(bandComponent) < 1e-8f) bandComponent = 0.0f;
+                if (std::abs(bandComponent) < 1e-10f) bandComponent = 0.0f;
                 bandComponent = juce::jlimit(-1.0f, 1.0f, bandComponent);
                 
                 // Calculate how much to reduce this band
