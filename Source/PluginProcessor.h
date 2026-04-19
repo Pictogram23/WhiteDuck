@@ -57,8 +57,9 @@ private:
 // Band Processing - Two-frequency band (LEFT/RIGHT)
 struct DuckingBand
 {
-    BiquadFilter highPassFilter;   // HIGH-PASS filter at leftFreq (removes frequencies below LEFT)
-    BiquadFilter lowPassFilter;    // LOW-PASS filter at rightFreq (removes frequencies above RIGHT)
+    // Separate filter instances for left and right channels to prevent cross-channel interference
+    BiquadFilter highPassFilter[2];    // [0] = Left channel, [1] = Right channel
+    BiquadFilter lowPassFilter[2];     // [0] = Left channel, [1] = Right channel
     float leftFreq = 150.0f;       // Hz - lower frequency boundary (default 150)
     float rightFreq = 5000.0f;     // Hz - upper frequency boundary (default 5000)
     bool enabled = true;           // Band enable toggle
@@ -67,8 +68,10 @@ struct DuckingBand
     
     void reset() 
     { 
-        highPassFilter.reset();
-        lowPassFilter.reset();
+        highPassFilter[0].reset();
+        highPassFilter[1].reset();
+        lowPassFilter[0].reset();
+        lowPassFilter[1].reset();
     }
     
     void updateCoefficients(float sampleRate)
@@ -112,7 +115,9 @@ struct DuckingBand
         
         // Ensure stability
         if (std::abs(a0_hp) < 1e-6f) a0_hp = 1e-6f;
-        highPassFilter.setCoefficients(b0_hp / a0_hp, b1_hp / a0_hp, b2_hp / a0_hp, a1_hp / a0_hp, a2_hp / a0_hp);
+        // Set coefficients for both channels
+        highPassFilter[0].setCoefficients(b0_hp / a0_hp, b1_hp / a0_hp, b2_hp / a0_hp, a1_hp / a0_hp, a2_hp / a0_hp);
+        highPassFilter[1].setCoefficients(b0_hp / a0_hp, b1_hp / a0_hp, b2_hp / a0_hp, a1_hp / a0_hp, a2_hp / a0_hp);
         
         // ========== LOW-PASS FILTER (at rightFreq) ==========
         // Use higher Q for low frequencies to avoid instability
@@ -136,7 +141,9 @@ struct DuckingBand
         
         // Ensure stability
         if (std::abs(a0_lp) < 1e-6f) a0_lp = 1e-6f;
-        lowPassFilter.setCoefficients(b0_lp / a0_lp, b1_lp / a0_lp, b2_lp / a0_lp, a1_lp / a0_lp, a2_lp / a0_lp);
+        // Set coefficients for both channels
+        lowPassFilter[0].setCoefficients(b0_lp / a0_lp, b1_lp / a0_lp, b2_lp / a0_lp, a1_lp / a0_lp, a2_lp / a0_lp);
+        lowPassFilter[1].setCoefficients(b0_lp / a0_lp, b1_lp / a0_lp, b2_lp / a0_lp, a1_lp / a0_lp, a2_lp / a0_lp);
     }
 };
 

@@ -175,6 +175,13 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     // Apply ducking to audio with band processing
     int numSamples = buffer.getNumSamples();
     
+    // Pre-calculate envelope levels for all samples (for consistent L/R processing)
+    std::vector<float> envelopeLevels(numSamples);
+    for (int sample = 0; sample < numSamples; ++sample)
+    {
+        envelopeLevels[sample] = duckingEnvelope.process();
+    }
+    
     // Check if any band is enabled
     bool anyBandEnabled = false;
     for (int b = 0; b < NUM_BANDS; ++b)
@@ -187,19 +194,12 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     }
     
     
-    // Track phase transitions for filter cleanup
+    // Track phase transitions (for debugging/future use)
     static DuckingEnvelope::Phase lastPhase = DuckingEnvelope::Phase::Idle;
     DuckingEnvelope::Phase currentPhase = duckingEnvelope.getPhase();
     
-    // Reset filter when returning to Idle (end of release cycle)
-    if (currentPhase == DuckingEnvelope::Phase::Idle && 
-        lastPhase != DuckingEnvelope::Phase::Idle)
-    {
-        for (int b = 0; b < NUM_BANDS; ++b)
-        {
-            duckingBands[b].reset();
-        }
-    }
+    // Do NOT reset filter on phase transitions - maintain smooth ducking
+    // even when Attack and Release overlap. This prevents clicks/artifacts.
     lastPhase = currentPhase;
     
     for (int channel = 0; channel < totalNumInputChannels; ++channel)
@@ -208,7 +208,7 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         
         for (int sample = 0; sample < numSamples; ++sample)
         {
-            float envelopeLevel = duckingEnvelope.process();
+            float envelopeLevel = envelopeLevels[sample];
             
             // Clamp envelope
             envelopeLevel = juce::jlimit(0.01f, 1.0f, envelopeLevel);
@@ -231,13 +231,13 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 
                 // Extract the band component (LEFT to RIGHT frequencies only)
                 // Apply HIGH-PASS filter first (removes frequencies below LEFT)
-                float bandComponent = duckingBands[0].highPassFilter.process(output);
+                float bandComponent = duckingBands[0].highPassFilter[channel].process(output);
                 
                 // Aggressive denormal flush between filters
                 if (std::abs(bandComponent) < 1e-10f) bandComponent = 0.0f;
                 
                 // Then apply LOW-PASS filter (removes frequencies above RIGHT)
-                bandComponent = duckingBands[0].lowPassFilter.process(bandComponent);
+                bandComponent = duckingBands[0].lowPassFilter[channel].process(bandComponent);
                 
                 // Clamp band component with denormal flush
                 if (std::abs(bandComponent) < 1e-10f) bandComponent = 0.0f;
