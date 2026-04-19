@@ -54,60 +54,75 @@ private:
 // Band Processing - Two-frequency band (LEFT/RIGHT)
 struct DuckingBand
 {
-    BiquadFilter bandPassFilter;   // Bandpass filter between leftFreq and rightFreq
-    float leftFreq = 100.0f;       // Hz - lower frequency boundary
-    float rightFreq = 5000.0f;     // Hz - upper frequency boundary
-    bool enabled = true;
+    BiquadFilter highPassFilter;   // HIGH-PASS filter at leftFreq (removes frequencies below LEFT)
+    BiquadFilter lowPassFilter;    // LOW-PASS filter at rightFreq (removes frequencies above RIGHT)
+    float leftFreq = 150.0f;       // Hz - lower frequency boundary (default 150)
+    float rightFreq = 5000.0f;     // Hz - upper frequency boundary (default 5000)
+    bool enabled = true;           // Band enable toggle
+    bool leftEnabled = true;       // LEFT frequency boundary enable
+    bool rightEnabled = true;      // RIGHT frequency boundary enable
     
     void reset() 
     { 
-        bandPassFilter.reset();
+        highPassFilter.reset();
+        lowPassFilter.reset();
     }
     
     void updateCoefficients(float sampleRate)
     {
+        // Determine effective frequency boundaries based on enable flags
+        float left = leftFreq;
+        float right = rightFreq;
+        
+        // If LEFT is disabled, set high-pass to 20Hz (allow all low frequencies)
+        if (!leftEnabled)
+            left = 20.0f;
+        
+        // If RIGHT is disabled, set low-pass to 20kHz (allow all high frequencies)
+        if (!rightEnabled)
+            right = 20000.0f;
+        
         // Clamp frequencies
-        float left = juce::jlimit(20.0f, 19999.0f, leftFreq);
-        float right = juce::jlimit(21.0f, 20000.0f, rightFreq);
+        left = juce::jlimit(20.0f, 19999.0f, left);
+        right = juce::jlimit(21.0f, 20000.0f, right);
         if (left >= right) right = left + 100.0f;
         
-        // Calculate center frequency and bandwidth
-        float centerFreq = (left + right) / 2.0f;
-        float bandwidth = right - left;
+        // Q factor for both filters (fixed at 0.707 for Butterworth response)
+        const float Q = 0.707f;
         
-        // Q from center frequency and bandwidth
-        float q = centerFreq / bandwidth;
+        // ========== HIGH-PASS FILTER (at leftFreq) ==========
+        float w0_hp = 2.0f * 3.14159265f * left / sampleRate;
+        float sinW0_hp = std::sin(w0_hp);
+        float cosW0_hp = std::cos(w0_hp);
+        float alpha_hp = sinW0_hp / (2.0f * Q);
         
-        // If bandwidth is very wide (>95% of audible spectrum), bypass filter
-        // to avoid numerical instability
-        if (bandwidth > 19000.0f)
-        {
-            // Passthrough filter (b0=1, b1=0, b2=0, a1=0, a2=0)
-            bandPassFilter.setCoefficients(1.0f, 0.0f, 0.0f, 0.0f, 0.0f);
-            return;
-        }
+        // High-pass coefficients
+        float b0_hp = (1.0f + cosW0_hp) / 2.0f;
+        float b1_hp = -(1.0f + cosW0_hp);
+        float b2_hp = (1.0f + cosW0_hp) / 2.0f;
+        float a0_hp = 1.0f + alpha_hp;
+        float a1_hp = -2.0f * cosW0_hp;
+        float a2_hp = 1.0f - alpha_hp;
         
-        // Clamp Q for stability
-        q = juce::jlimit(0.5f, 2.0f, q);
+        if (std::abs(a0_hp) < 1e-10f) a0_hp = 1.0f;
+        highPassFilter.setCoefficients(b0_hp / a0_hp, b1_hp / a0_hp, b2_hp / a0_hp, a1_hp / a0_hp, a2_hp / a0_hp);
         
-        // Bandpass filter coefficients (constant-skirt style)
-        float w0 = 2.0f * 3.14159265f * centerFreq / sampleRate;
-        float sinW0 = std::sin(w0);
-        float cosW0 = std::cos(w0);
-        float alpha = sinW0 / (2.0f * q);
+        // ========== LOW-PASS FILTER (at rightFreq) ==========
+        float w0_lp = 2.0f * 3.14159265f * right / sampleRate;
+        float sinW0_lp = std::sin(w0_lp);
+        float cosW0_lp = std::cos(w0_lp);
+        float alpha_lp = sinW0_lp / (2.0f * Q);
         
-        // Bandpass: b0=alpha, b1=0, b2=-alpha
-        float b0 = alpha;
-        float b1 = 0.0f;
-        float b2 = -alpha;
-        float a0 = 1.0f + alpha;
-        float a1 = -2.0f * cosW0;
-        float a2 = 1.0f - alpha;
+        // Low-pass coefficients
+        float b0_lp = (1.0f - cosW0_lp) / 2.0f;
+        float b1_lp = 1.0f - cosW0_lp;
+        float b2_lp = (1.0f - cosW0_lp) / 2.0f;
+        float a0_lp = 1.0f + alpha_lp;
+        float a1_lp = -2.0f * cosW0_lp;
+        float a2_lp = 1.0f - alpha_lp;
         
-        // Ensure a0 is not zero
-        if (std::abs(a0) < 1e-10f) a0 = 1.0f;
-        
-        bandPassFilter.setCoefficients(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+        if (std::abs(a0_lp) < 1e-10f) a0_lp = 1.0f;
+        lowPassFilter.setCoefficients(b0_lp / a0_lp, b1_lp / a0_lp, b2_lp / a0_lp, a1_lp / a0_lp, a2_lp / a0_lp);
     }
 };
 
@@ -249,15 +264,14 @@ public:
     void setMidiNoteToTrigger(int newNote) { midiNoteToTrigger = juce::jlimit(0, 127, newNote); }
     int getMidiNoteToTrigger() const { return midiNoteToTrigger; }
     
+    // Diagnostic: Check if bandpass filter is working
+    
     // Band parameter accessors (LEFT=0, RIGHT=1)
-    float getBandFrequency(int bandIndex) const
+    float getBandFrequency(int bandIndex, bool isLeftFreq = true) const
     {
         if (bandIndex >= 0 && bandIndex < NUM_BANDS)
         {
-            if (bandIndex == 0)  // LEFT
-                return duckingBands[0].leftFreq;
-            else                 // RIGHT
-                return duckingBands[1].rightFreq;
+            return isLeftFreq ? duckingBands[bandIndex].leftFreq : duckingBands[bandIndex].rightFreq;
         }
         return 100.0f;
     }
@@ -269,21 +283,25 @@ public:
         return false;
     }
     
-    void setBandFrequency(int bandIndex, float freq)
+    void setBandFrequency(int bandIndex, float freq, bool isLeftFreq = true)
     {
         if (bandIndex >= 0 && bandIndex < NUM_BANDS)
         {
-            if (bandIndex == 0)  // LEFT
+            if (isLeftFreq)
             {
-                duckingBands[0].leftFreq = juce::jlimit(20.0f, 19999.0f, freq);
-                if (duckingBands[0].leftFreq >= duckingBands[1].rightFreq)
-                    duckingBands[1].rightFreq = duckingBands[0].leftFreq + 100.0f;
+                // Setting LEFT (lower) frequency boundary
+                duckingBands[bandIndex].leftFreq = juce::jlimit(20.0f, 19999.0f, freq);
+                // Ensure LEFT < RIGHT
+                if (duckingBands[bandIndex].leftFreq >= duckingBands[bandIndex].rightFreq)
+                    duckingBands[bandIndex].rightFreq = duckingBands[bandIndex].leftFreq + 100.0f;
             }
-            else  // RIGHT
+            else
             {
-                duckingBands[1].rightFreq = juce::jlimit(21.0f, 20000.0f, freq);
-                if (duckingBands[1].rightFreq <= duckingBands[0].leftFreq)
-                    duckingBands[0].leftFreq = duckingBands[1].rightFreq - 100.0f;
+                // Setting RIGHT (upper) frequency boundary
+                duckingBands[bandIndex].rightFreq = juce::jlimit(21.0f, 20000.0f, freq);
+                // Ensure RIGHT > LEFT
+                if (duckingBands[bandIndex].rightFreq <= duckingBands[bandIndex].leftFreq)
+                    duckingBands[bandIndex].leftFreq = duckingBands[bandIndex].rightFreq - 100.0f;
             }
             updateBandCoefficients();
         }
@@ -295,18 +313,50 @@ public:
             duckingBands[bandIndex].enabled = enable;
     }
     
+    bool isBandLeftEnabled(int bandIndex) const
+    {
+        if (bandIndex >= 0 && bandIndex < NUM_BANDS)
+            return duckingBands[bandIndex].leftEnabled;
+        return true;
+    }
+    
+    void setBandLeftEnabled(int bandIndex, bool enable)
+    {
+        if (bandIndex >= 0 && bandIndex < NUM_BANDS)
+        {
+            duckingBands[bandIndex].leftEnabled = enable;
+            updateBandCoefficients();
+        }
+    }
+    
+    bool isBandRightEnabled(int bandIndex) const
+    {
+        if (bandIndex >= 0 && bandIndex < NUM_BANDS)
+            return duckingBands[bandIndex].rightEnabled;
+        return true;
+    }
+    
+    void setBandRightEnabled(int bandIndex, bool enable)
+    {
+        if (bandIndex >= 0 && bandIndex < NUM_BANDS)
+        {
+            duckingBands[bandIndex].rightEnabled = enable;
+            updateBandCoefficients();
+        }
+    }
+    
     // Band initialization and coefficient update
     void initializeBands()
     {
-        // LEFT: 150 Hz cutoff (lower boundary)
+        // Single band with LEFT/RIGHT frequency boundaries
         duckingBands[0].leftFreq = 150.0f;
         duckingBands[0].rightFreq = 5000.0f;
         duckingBands[0].enabled = true;
+        duckingBands[0].leftEnabled = true;
+        duckingBands[0].rightEnabled = true;
         
-        // RIGHT: 5000 Hz cutoff (upper boundary)
-        duckingBands[1].leftFreq = 150.0f;
-        duckingBands[1].rightFreq = 5000.0f;
-        duckingBands[1].enabled = true;
+        // Band 1 is unused (kept for potential expansion)
+        duckingBands[1].enabled = false;
     }
     
     void updateBandCoefficients()

@@ -70,17 +70,15 @@ private:
     ResetableSlider midiNoteSlider{static_cast<float>(WhiteDuckAudioProcessor::DEFAULT_MIDI_NOTE)};
     juce::Label midiNoteLabel;
     
-    // Band selection buttons (LEFT/RIGHT frequency boundaries)
-    juce::TextButton leftBandButton{"LEFT"};
-    juce::TextButton rightBandButton{"RIGHT"};
-    
     // Band parameter controls
-    juce::ToggleButton enableBandButton{"Enable"};
+    juce::ToggleButton enableLeftButton{"Enable LEFT"};
+    juce::ToggleButton enableRightButton{"Enable RIGHT"};
     
-    ResetableSlider bandFreqSlider{100.0f};
-    juce::Label bandFreqLabel;
+    ResetableSlider leftFreqSlider{150.0f};
+    juce::Label leftFreqLabel;
     
-    int currentBandIndex = 0;
+    ResetableSlider rightFreqSlider{5000.0f};
+    juce::Label rightFreqLabel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WhiteDuckAudioProcessorEditor)
 };

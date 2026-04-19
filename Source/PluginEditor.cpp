@@ -50,31 +50,39 @@ WhiteDuckAudioProcessorEditor::WhiteDuckAudioProcessorEditor (WhiteDuckAudioProc
     midiNoteLabel.attachToComponent(&midiNoteSlider, true);
     addAndMakeVisible(midiNoteLabel);
     
-    // Band selection buttons (LEFT/RIGHT frequency boundaries)
-    leftBandButton.addListener(this);
-    leftBandButton.setColour(juce::TextButton::buttonColourId, juce::Colours::grey);
-    addAndMakeVisible(leftBandButton);
+    // Band enable toggles (separate for LEFT and RIGHT)
+    enableLeftButton.addListener(this);
+    addAndMakeVisible(enableLeftButton);
     
-    rightBandButton.addListener(this);
-    rightBandButton.setColour(juce::TextButton::buttonColourId, juce::Colours::grey);
-    addAndMakeVisible(rightBandButton);
+    enableRightButton.addListener(this);
+    addAndMakeVisible(enableRightButton);
     
-    // Band enable toggle
-    enableBandButton.addListener(this);
-    addAndMakeVisible(enableBandButton);
+    // LEFT frequency slider
+    leftFreqSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    leftFreqSlider.setRange(20.0, 19999.0, 1.0);
+    leftFreqSlider.setSkewFactorFromMidPoint(500.0);
+    leftFreqSlider.setValue(audioProcessor.getBandFrequency(0, true), juce::dontSendNotification);
+    leftFreqSlider.addListener(this);
+    addAndMakeVisible(leftFreqSlider);
+    leftFreqLabel.setText("LEFT", juce::dontSendNotification);
+    leftFreqLabel.attachToComponent(&leftFreqSlider, true);
+    addAndMakeVisible(leftFreqLabel);
     
-    // Band frequency slider (LEFT or RIGHT cutoff frequency)
-    bandFreqSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    bandFreqSlider.setRange(20.0, 20000.0, 1.0);
-    bandFreqSlider.setSkewFactorFromMidPoint(500.0);
-    bandFreqSlider.addListener(this);
-    addAndMakeVisible(bandFreqSlider);
-    bandFreqLabel.setText("Freq", juce::dontSendNotification);
-    bandFreqLabel.attachToComponent(&bandFreqSlider, true);
-    addAndMakeVisible(bandFreqLabel);
+    // RIGHT frequency slider
+    rightFreqSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    rightFreqSlider.setRange(21.0, 20000.0, 1.0);
+    rightFreqSlider.setSkewFactorFromMidPoint(5000.0);
+    rightFreqSlider.setValue(audioProcessor.getBandFrequency(0, false), juce::dontSendNotification);
+    rightFreqSlider.addListener(this);
+    addAndMakeVisible(rightFreqSlider);
+    rightFreqLabel.setText("RIGHT", juce::dontSendNotification);
+    rightFreqLabel.attachToComponent(&rightFreqSlider, true);
+    addAndMakeVisible(rightFreqLabel);
     
-    updateBandUI(0);
-    setSize(550, 320);
+    // Update UI with current band state
+    enableLeftButton.setToggleState(audioProcessor.isBandLeftEnabled(0), juce::dontSendNotification);
+    enableRightButton.setToggleState(audioProcessor.isBandRightEnabled(0), juce::dontSendNotification);
+    setSize(550, 310);
 }
 
 WhiteDuckAudioProcessorEditor::~WhiteDuckAudioProcessorEditor()
@@ -111,19 +119,16 @@ void WhiteDuckAudioProcessorEditor::resized()
     
     midiNoteSlider.setBounds(labelWidth + 10, yOffset, getWidth() - labelWidth - 20, sliderHeight);
     
-    // Band selection buttons (LEFT/RIGHT)
-    int bandButtonY = yOffset + spacing + 15;
-    int bandButtonWidth = 50;
-    int bandButtonX = 20;
-    leftBandButton.setBounds(bandButtonX, bandButtonY, bandButtonWidth, 25);
-    rightBandButton.setBounds(bandButtonX + bandButtonWidth + 10, bandButtonY, bandButtonWidth, 25);
+    // Band controls - compact layout
+    int bandSettingsY = yOffset + spacing + 10;
+    enableLeftButton.setBounds(20, bandSettingsY, 130, 20);
+    enableRightButton.setBounds(160, bandSettingsY, 130, 20);
     
-    // Band settings
-    int bandSettingsY = bandButtonY + 40;
-    enableBandButton.setBounds(20, bandSettingsY, 80, 20);
+    int leftFreqY = bandSettingsY + 30;
+    leftFreqSlider.setBounds(labelWidth + 10, leftFreqY, getWidth() - labelWidth - 20, sliderHeight);
     
-    int bandParamY = bandSettingsY + 35;
-    bandFreqSlider.setBounds(labelWidth + 10, bandParamY, getWidth() - labelWidth - 20, sliderHeight);
+    int rightFreqY = leftFreqY + spacing;
+    rightFreqSlider.setBounds(labelWidth + 10, rightFreqY, getWidth() - labelWidth - 20, sliderHeight);
 }
 
 void WhiteDuckAudioProcessorEditor::sliderValueChanged(juce::Slider* slider)
@@ -144,43 +149,29 @@ void WhiteDuckAudioProcessorEditor::sliderValueChanged(juce::Slider* slider)
     {
         audioProcessor.setMidiNoteToTrigger(static_cast<int>(midiNoteSlider.getValue()));
     }
-    else if (slider == &bandFreqSlider)
+    else if (slider == &leftFreqSlider)
     {
-        audioProcessor.setBandFrequency(currentBandIndex, static_cast<float>(bandFreqSlider.getValue()));
-        
-        // Sync UI with processor values in case they were adjusted (LEFT/RIGHT order check)
-        updateBandUI(currentBandIndex);
+        audioProcessor.setBandFrequency(0, static_cast<float>(leftFreqSlider.getValue()), true);
+    }
+    else if (slider == &rightFreqSlider)
+    {
+        audioProcessor.setBandFrequency(0, static_cast<float>(rightFreqSlider.getValue()), false);
     }
 }
 
 void WhiteDuckAudioProcessorEditor::buttonClicked(juce::Button* button)
 {
-    if (button == &leftBandButton)
+    if (button == &enableLeftButton)
     {
-        updateBandUI(0);
+        audioProcessor.setBandLeftEnabled(0, enableLeftButton.getToggleState());
     }
-    else if (button == &rightBandButton)
+    else if (button == &enableRightButton)
     {
-        updateBandUI(1);
-    }
-    else if (button == &enableBandButton)
-    {
-        audioProcessor.setBandEnabled(currentBandIndex, enableBandButton.getToggleState());
+        audioProcessor.setBandRightEnabled(0, enableRightButton.getToggleState());
     }
 }
 
 void WhiteDuckAudioProcessorEditor::updateBandUI(int bandIndex)
 {
-    currentBandIndex = bandIndex;
-    
-    // Update button states (LEFT/RIGHT)
-    leftBandButton.setToggleState(bandIndex == 0, juce::dontSendNotification);
-    rightBandButton.setToggleState(bandIndex == 1, juce::dontSendNotification);
-    
-    leftBandButton.setColour(juce::TextButton::buttonColourId, bandIndex == 0 ? juce::Colours::blue : juce::Colours::grey);
-    rightBandButton.setColour(juce::TextButton::buttonColourId, bandIndex == 1 ? juce::Colours::blue : juce::Colours::grey);
-    
-    // Update band parameter sliders
-    enableBandButton.setToggleState(audioProcessor.isBandEnabled(bandIndex), juce::dontSendNotification);
-    bandFreqSlider.setValue(audioProcessor.getBandFrequency(bandIndex), juce::dontSendNotification);
+    // Placeholder for future use
 }

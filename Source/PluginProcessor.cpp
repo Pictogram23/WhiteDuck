@@ -22,6 +22,8 @@ WhiteDuckAudioProcessor::WhiteDuckAudioProcessor()
                        )
 #endif
 {
+    // Initialize bands with default values (will be overridden by setStateInformation if state exists)
+    initializeBands();
 }
 
 WhiteDuckAudioProcessor::~WhiteDuckAudioProcessor()
@@ -99,8 +101,8 @@ void WhiteDuckAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
     duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
     
-    // Initialize bands and reset filter states
-    initializeBands();
+    // Update filter coefficients with current band settings
+    // (initializeBands is called only in constructor to preserve loaded state)
     updateBandCoefficients();
     for (int b = 0; b < NUM_BANDS; ++b)
     {
@@ -184,6 +186,7 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         }
     }
     
+    
     // Track phase transitions for filter cleanup
     static DuckingEnvelope::Phase lastPhase = DuckingEnvelope::Phase::Idle;
     DuckingEnvelope::Phase currentPhase = duckingEnvelope.getPhase();
@@ -219,14 +222,15 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             if (std::abs(output) < 1e-8f) output = 0.0f;
             output = juce::jlimit(-1.0f, 1.0f, output);
             
-            // Only process filter during ATTACK phase to avoid filter drift
-            // During Release, use gainReduction directly without filter processing
-            bool isAttackPhase = (currentPhase == DuckingEnvelope::Phase::Attack);
-            
-            if (anyBandEnabled && gainReduction < 0.99f && isAttackPhase)
+            // Frequency-selective ducking: only LEFT/RIGHT band gets reduced
+            // Both Attack and Release process the band through both filters (in series)
+            if (anyBandEnabled && gainReduction < 0.99f)
             {
-                // Process through single bandpass filter (Attack only)
-                float bandComponent = duckingBands[0].bandPassFilter.process(output);
+                // Extract the band component (LEFT to RIGHT frequencies only)
+                // Apply HIGH-PASS filter first (removes frequencies below LEFT)
+                float bandComponent = duckingBands[0].highPassFilter.process(output);
+                // Then apply LOW-PASS filter (removes frequencies above RIGHT)
+                bandComponent = duckingBands[0].lowPassFilter.process(bandComponent);
                 
                 // Clamp band component with denormal flush
                 if (std::abs(bandComponent) < 1e-8f) bandComponent = 0.0f;
@@ -236,17 +240,11 @@ void WhiteDuckAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 float duckAmount = 1.0f - gainReduction;
                 duckAmount = juce::jlimit(0.0f, 1.0f, duckAmount);
                 
-                // Remove the band component and apply ducking
+                // Reduce only the band component
+                // Everything outside LEFT/RIGHT remains unaffected
                 output = output - (bandComponent * duckAmount);
                 
                 // Safety clip with headroom
-                output = juce::jlimit(-0.99f, 0.99f, output);
-            }
-            else if (anyBandEnabled && gainReduction < 1.0f && !isAttackPhase)
-            {
-                // Release phase: apply pure gain reduction without filter processing
-                // This prevents filter state drift noise during long releases
-                output = output * gainReduction;
                 output = juce::jlimit(-0.99f, 0.99f, output);
             }
             
@@ -275,17 +273,23 @@ void WhiteDuckAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     juce::MemoryOutputStream mos(destData, true);
     
+    // Save version number
+    mos.writeInt(2);  // Version 2 - includes leftEnabled/rightEnabled
+    
+    // Global parameters
     mos.writeFloat(mixAmount);
     mos.writeFloat(attackTimeMs);
     mos.writeFloat(releaseTimeMs);
     mos.writeInt(midiNoteToTrigger);
     
-    // Save band parameters (LEFT/RIGHT frequencies)
+    // Band parameters - use int (0/1) instead of bool for consistency
     for (int b = 0; b < NUM_BANDS; ++b)
     {
         mos.writeFloat(duckingBands[b].leftFreq);
         mos.writeFloat(duckingBands[b].rightFreq);
-        mos.writeBool(duckingBands[b].enabled);
+        mos.writeInt(duckingBands[b].enabled ? 1 : 0);
+        mos.writeInt(duckingBands[b].leftEnabled ? 1 : 0);
+        mos.writeInt(duckingBands[b].rightEnabled ? 1 : 0);
     }
 }
 
@@ -293,7 +297,12 @@ void WhiteDuckAudioProcessor::setStateInformation (const void* data, int sizeInB
 {
     juce::MemoryInputStream mis(data, sizeInBytes, false);
     
-    if (sizeInBytes >= (sizeof(float) * 3 + sizeof(int)))
+    if (sizeInBytes < 20)  // Minimum: version(4) + mix(4) + attack(4) + release(4) + midi(4)
+        return;
+    
+    int version = mis.readInt();
+    
+    if (version == 1 || version == 2)
     {
         mixAmount = mis.readFloat();
         attackTimeMs = mis.readFloat();
@@ -303,18 +312,30 @@ void WhiteDuckAudioProcessor::setStateInformation (const void* data, int sizeInB
         duckingEnvelope.setAttackTime(sampleRate, attackTimeMs);
         duckingEnvelope.setReleaseTime(sampleRate, releaseTimeMs);
         
-        // Load band parameters if available (LEFT/RIGHT frequencies)
+        // Load band parameters
         for (int b = 0; b < NUM_BANDS; ++b)
         {
-            if (mis.getPosition() < mis.getTotalLength())
+            // Version 2 requires 20 bytes per band (leftFreq + rightFreq + enabled + leftEnabled + rightEnabled)
+            int bytesNeeded = version == 2 ? 20 : 12;
+            if (mis.getPosition() + bytesNeeded <= mis.getTotalLength())
             {
                 duckingBands[b].leftFreq = mis.readFloat();
                 duckingBands[b].rightFreq = mis.readFloat();
-                duckingBands[b].enabled = mis.readBool();
+                duckingBands[b].enabled = mis.readInt() != 0;
+                
+                if (version == 2)
+                {
+                    duckingBands[b].leftEnabled = mis.readInt() != 0;
+                    duckingBands[b].rightEnabled = mis.readInt() != 0;
+                }
             }
         }
         
-        updateBandCoefficients();
+        // Only update coefficients if sampleRate is valid (will be called again in prepareToPlay)
+        if (sampleRate > 1000.0)  // Sanity check - sample rate should be at least 44100
+        {
+            updateBandCoefficients();
+        }
     }
 }
 
